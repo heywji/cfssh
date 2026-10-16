@@ -55,8 +55,11 @@ func Run(orch *orchestrator.Orchestrator) {
 	intro.Wrapping = fyne.TextWrapWord
 
 	token := widget.NewPasswordEntry()
-	token.SetText(cfg.APIToken)
-	token.SetPlaceHolder("Cloudflare API 令牌")
+	if cfg.APIToken != "" {
+		token.SetPlaceHolder("已保存在本机，留空则继续使用")
+	} else {
+		token.SetPlaceHolder("粘贴 Cloudflare API 令牌")
+	}
 
 	accountSel := widget.NewSelect([]string{}, nil)
 	zoneSel := widget.NewSelect([]string{}, nil)
@@ -102,25 +105,53 @@ func Run(orch *orchestrator.Orchestrator) {
 
 	applyAccounts := func(list []cfapi.Account, zlist []cfapi.Zone) {
 		accounts = accounts[:0]
-		labels := make([]string, 0, len(list))
+		seen := map[string]bool{}
 		for _, item := range list {
-			accounts = append(accounts, accountOpt{ID: item.ID, Name: item.Name})
+			if item.ID == "" || seen[item.ID] {
+				continue
+			}
+			seen[item.ID] = true
+			name := item.Name
+			if name == "" {
+				name = "当前账户"
+			}
+			accounts = append(accounts, accountOpt{ID: item.ID, Name: name})
+		}
+		zones = zones[:0]
+		for _, item := range zlist {
+			zones = append(zones, zoneOpt{ID: item.ID, Name: item.Name, AccountID: item.AccountID})
+			if item.AccountID == "" || seen[item.AccountID] {
+				continue
+			}
+			seen[item.AccountID] = true
+			accounts = append(accounts, accountOpt{ID: item.AccountID, Name: "当前账户"})
+		}
+		if len(list) == 0 && len(accounts) > 1 {
+			for i := range accounts {
+				short := accounts[i].ID
+				if len(short) > 6 {
+					short = short[:6]
+				}
+				accounts[i].Name = "账户 " + short
+			}
+		}
+		labels := make([]string, 0, len(accounts))
+		for _, item := range accounts {
 			labels = append(labels, item.Name)
 		}
 		accountSel.Options = labels
 		accountSel.Refresh()
-		zones = zones[:0]
-		for _, item := range zlist {
-			zones = append(zones, zoneOpt{ID: item.ID, Name: item.Name, AccountID: item.AccountID})
-		}
+		picked := false
 		if cfg.AccountID != "" {
 			for _, item := range accounts {
 				if item.ID == cfg.AccountID {
 					accountSel.SetSelected(item.Name)
+					picked = true
 					break
 				}
 			}
-		} else if len(labels) == 1 {
+		}
+		if !picked && len(labels) == 1 {
 			accountSel.SetSelected(labels[0])
 		}
 		refillZones(accountSel, zoneSel, accounts, zones, cfg.ZoneID)
@@ -130,6 +161,17 @@ func Run(orch *orchestrator.Orchestrator) {
 	accountSel.OnChanged = func(string) {
 		refillZones(accountSel, zoneSel, accounts, zones, "")
 		refreshHost()
+	}
+	if cfg.AccountID != "" || cfg.ZoneID != "" {
+		seed := []cfapi.Account{}
+		if cfg.AccountID != "" {
+			seed = append(seed, cfapi.Account{ID: cfg.AccountID, Name: "当前账户"})
+		}
+		var seedZones []cfapi.Zone
+		if cfg.ZoneID != "" && cfg.ZoneName != "" {
+			seedZones = []cfapi.Zone{{ID: cfg.ZoneID, Name: cfg.ZoneName, AccountID: cfg.AccountID}}
+		}
+		applyAccounts(seed, seedZones)
 	}
 
 	setStatus := func(text string, c color.NRGBA) {
@@ -159,6 +201,9 @@ func Run(orch *orchestrator.Orchestrator) {
 	collect := func() (config.File, string, error) {
 		next := cfg
 		next.APIToken = strings.TrimSpace(token.Text)
+		if next.APIToken == "" {
+			next.APIToken = cfg.APIToken
+		}
 		next.Subdomain = strings.TrimSpace(sub.Text)
 		next.LocalhostOnly = localhost.Checked
 		next.PasswordAuth = true
@@ -195,6 +240,9 @@ func Run(orch *orchestrator.Orchestrator) {
 		}
 		tok := strings.TrimSpace(token.Text)
 		if tok == "" {
+			tok = cfg.APIToken
+		}
+		if tok == "" {
 			orch.Log("先粘贴 API 令牌")
 			return
 		}
@@ -218,7 +266,11 @@ func Run(orch *orchestrator.Orchestrator) {
 				if err := config.Save(cfg); err != nil {
 					orch.Log("保存配置失败: " + err.Error())
 				}
-				orch.Log(fmt.Sprintf("令牌可用，%d 个账户，%d 个域名", len(acc), len(zs)))
+				if len(acc) == 0 && len(zs) > 0 {
+					orch.Log(fmt.Sprintf("令牌可用，域名 %d 个。这把令牌列不出账户名称，已按域名选中账户。", len(zs)))
+				} else {
+					orch.Log(fmt.Sprintf("令牌可用，%d 个账户，%d 个域名", len(acc), len(zs)))
+				}
 				setStatus("令牌已验证", color.NRGBA{R: 20, G: 120, B: 70, A: 255})
 				refreshLog()
 			})
