@@ -1,3 +1,5 @@
+//go:build !windows
+
 package ui
 
 import (
@@ -21,7 +23,6 @@ import (
 	"cfssh/internal/clientcfg"
 	"cfssh/internal/orchestrator"
 	"cfssh/internal/provision"
-	"cfssh/internal/supervisor"
 )
 
 // runCustomer is the shipped-to-customer window. Everything about Cloudflare was
@@ -86,18 +87,7 @@ func runCustomer(orch *orchestrator.Orchestrator, b provision.File) {
 		status.Color = c
 		status.Refresh()
 	}
-	refreshLog := func() {
-		text := orch.Text()
-		if dir := orch.RunDir(); dir != "" {
-			if extra := readTail(supervisor.LogPath(dir), 80); extra != "" {
-				if text != "" {
-					text += "\n"
-				}
-				text += extra
-			}
-		}
-		logs.Set(text)
-	}
+	refreshLog := func() { logs.Set(customerLogText(orch)) }
 	orch.OnChange(func() { fyne.Do(refreshLog) })
 
 	var launch func(pw string, newPassword bool)

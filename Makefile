@@ -1,4 +1,4 @@
-.PHONY: build test run build-macos-app
+.PHONY: build test run build-macos-app build-windows winres
 
 build:
 	mkdir -p dist
@@ -22,3 +22,7 @@ build-windows:
 	mkdir -p dist
 	CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
 		go build -ldflags "-H windowsgui" -o dist/cfssh.exe ./cmd/cfssh
+
+# Regenerate the Windows resource (manifest: common controls v6, per-monitor DPI).
+winres:
+	cd cmd/cfssh && x86_64-w64-mingw32-windres cfssh.rc -O coff -o rsrc_windows_amd64.syso

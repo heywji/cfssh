@@ -104,20 +104,12 @@ Host ssh.example.com
 - Windows 上会停掉 OpenSSH 服务，并把 `sshd_config` 还原。安装程序自带的 OpenSSH 入站防火墙规则会被删掉，避免 22 端口裸露在网上。
 - 如果从任务管理器强制结束窗口进程，旁边的 helper 发现父进程没了，也会停掉隧道和 SSH。正在安装 OpenSSH 时关掉窗口，安装进程同样会被停掉。
 
-## 已知问题：没有 OpenGL 的 Windows
+## 没有显卡驱动的 Windows
 
-图形界面用的 Fyne 需要 OpenGL。没有显卡驱动的 Windows（多数云服务器、虚拟机，驱动是 Microsoft Basic Display Adapter）上，双击后窗口不会出现。临时办法：
+多数云服务器和虚拟机只有 Microsoft Basic Display Adapter，没有可用的 OpenGL。
 
-1. 从 [mesa-dist-win](https://github.com/pal1000/mesa-dist-win/releases) 的 `release-mingw` 包里取出 `x64/opengl32.dll` 和 `x64/libgallium_wgl.dll`，放到 `cfssh.exe` 旁边。
-2. 用下面的 `start-cfssh.cmd` 启动（必须指定 llvmpipe，Mesa 默认的 d3d12 后端在这类机器上同样起不来）：
-
-```bat
-@echo off
-set GALLIUM_DRIVER=llvmpipe
-start "" "%~dp0cfssh.exe"
-```
-
-计划改成 Windows 原生窗口，届时不再需要这一步。
+- **客户窗口**（旁边有 `cfssh-provision.json` 时）在 Windows 上用系统原生控件绘制，不需要 OpenGL，任何 Windows 都能打开。
+- **高级窗口**（运营方用，没有 sidecar 时）仍然基于 Fyne，需要 OpenGL。没有时会弹窗说明原因并退出。运营方可以改用命令行 `cfssh provision`，或在有显卡驱动的电脑上打开高级窗口。确实需要在这类机器上打开高级窗口的话，可以把 [mesa-dist-win](https://github.com/pal1000/mesa-dist-win/releases) 的 `x64/opengl32.dll`、`x64/libgallium_wgl.dll` 放到 `cfssh.exe` 旁边，并设置 `GALLIUM_DRIVER=llvmpipe` 后启动。
 
 ## 编译
 
@@ -147,6 +139,8 @@ go build -ldflags "-H windowsgui" -o dist\cfssh.exe .\cmd\cfssh
 ```
 
 `-H windowsgui` 用来隐藏旁边的黑色控制台。不加也能用。
+
+`cmd/cfssh/rsrc_windows_amd64.syso` 是由 `cmd/cfssh/cfssh.manifest` 编出来的 Windows 资源（现代控件样式、高 DPI），Go 编译 Windows 版时会自动链接。改了 manifest 后执行 `make winres` 重新生成。
 
 ## 安全
 
