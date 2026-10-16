@@ -4,3 +4,6 @@
 *.test
 internal/ui/fonts/*.ttf
 !internal/ui/fonts/NotoSansSC-Regular.ttf
+
+# provisioning bundle holds a tunnel token and service-token secret
+cfssh-provision.json

@@ -14,6 +14,10 @@ func main() {
 		supervisor.RunHelper(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "provision" {
+		runProvision(os.Args[2:])
+		return
+	}
 	if err := supervisor.PrepareProcess(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -76,14 +76,23 @@ func PatchWindows(original string, port int, listen, allowUser string, password 
 		}
 		kept = append(kept, line)
 	}
-	body := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+	// Global directives must come before the first Match block: anything after a
+	// Match line belongs to that block, and sshd refuses Port/ListenAddress there.
+	// The stock Windows sshd_config ends with "Match Group administrators".
+	head, tail := kept, []string(nil)
+	for i, line := range kept {
+		if matchRE.MatchString(line) {
+			head, tail = kept[:i], kept[i:]
+			break
+		}
+	}
 	pass := "yes"
 	if !password {
 		pass = "no"
 	}
 	var b strings.Builder
-	if body != "" {
-		b.WriteString(body)
+	if h := strings.TrimRight(strings.Join(head, "\n"), "\n"); h != "" {
+		b.WriteString(h)
 		b.WriteString("\n\n")
 	}
 	b.WriteString(markerBegin + "\n")
@@ -95,8 +104,15 @@ func PatchWindows(original string, port int, listen, allowUser string, password 
 		fmt.Fprintf(&b, "AllowUsers %s\n", allowUser)
 	}
 	b.WriteString(markerEnd + "\n")
+	if t := strings.TrimRight(strings.Join(tail, "\n"), "\n"); t != "" {
+		b.WriteString("\n")
+		b.WriteString(t)
+		b.WriteString("\n")
+	}
 	return b.String()
 }
+
+var matchRE = regexp.MustCompile(`(?i)^\s*Match\s`)
 
 func stripManaged(original string) string {
 	lines := strings.Split(original, "\n")

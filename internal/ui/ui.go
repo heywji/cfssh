@@ -21,6 +21,7 @@ import (
 	"cfssh/internal/clientcfg"
 	"cfssh/internal/config"
 	"cfssh/internal/orchestrator"
+	"cfssh/internal/provision"
 	"cfssh/internal/supervisor"
 )
 
@@ -36,7 +37,17 @@ type zoneOpt struct {
 }
 
 // Run shows the window. Closing it stops the tunnel and the SSH server.
+// If a provisioning sidecar is present, the minimal customer window is shown
+// instead: the user only enters their own login password.
 func Run(orch *orchestrator.Orchestrator) {
+	if path, ok := provision.Find(); ok {
+		if b, err := provision.Load(path); err == nil {
+			runCustomer(orch, b)
+			return
+		} else {
+			orch.Log("预配文件读取失败，回退到高级界面: " + err.Error())
+		}
+	}
 	a := app.NewWithID("dev.cfssh.app")
 	a.Settings().SetTheme(newCJKTheme())
 	w := a.NewWindow("CF SSH")
@@ -79,9 +90,7 @@ func Run(orch *orchestrator.Orchestrator) {
 	command.SetText("启动后这里会显示客户端命令。对方电脑也要安装 cloudflared。")
 	command.Wrapping = fyne.TextWrapWord
 
-	logBox := widget.NewMultiLineEntry()
-	logBox.Wrapping = fyne.TextWrapWord
-	logBox.Disable()
+	logs := newLogView()
 
 	var busy bool
 	var runCancel context.CancelFunc
@@ -182,9 +191,7 @@ func Run(orch *orchestrator.Orchestrator) {
 				text += extra
 			}
 		}
-		if logBox.Text != text {
-			logBox.SetText(text)
-		}
+		logs.Set(text)
 	}
 
 	orch.OnChange(func() {
@@ -375,7 +382,7 @@ func Run(orch *orchestrator.Orchestrator) {
 
 	split := container.NewVSplit(
 		container.NewVScroll(form),
-		container.NewBorder(widget.NewLabel("日志"), nil, nil, nil, logBox),
+		container.NewBorder(widget.NewLabel("日志"), nil, nil, nil, logs.scroll),
 	)
 	split.Offset = 0.68
 
@@ -537,4 +544,8 @@ func readTail(path string, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+func newPasswordHint(user string) string {
+	return "会把 Windows 用户 " + user + " 的登录密码改成这个新密码，以后登录这台电脑（包括远程桌面）都要用新密码。新密码要符合这台电脑的密码要求。别人 SSH 进来时也用这个新密码。"
 }
