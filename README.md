@@ -11,6 +11,16 @@
 | [cfssh-windows-amd64.exe](https://github.com/heywji/cfssh/releases/latest/download/cfssh-windows-amd64.exe) | Windows 64 位 |
 | [cfssh-macos-arm64](https://github.com/heywji/cfssh/releases/latest/download/cfssh-macos-arm64) | macOS Apple 芯片 |
 
+从浏览器下载后，macOS 会提示无法验证开发者。先在终端执行：
+
+```bash
+xattr -d com.apple.quarantine ~/Downloads/cfssh-macos-arm64
+chmod +x ~/Downloads/cfssh-macos-arm64
+open ~/Downloads/cfssh-macos-arm64
+```
+
+这条命令去掉下载隔离标记，之后再双击就能打开。Windows 上如果 SmartScreen 拦截，点「仍要运行」。
+
 Linux 在 Fedora 或 Ubuntu 上执行 `make build`。客户端只要安装 [cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)，然后 `ssh 你的主机名`。
 
 主要在 Windows 上用。同一套代码也能在 Fedora、Ubuntu 和 macOS 上编译。程序是一个 Go 二进制，运行时不用再装 Python、Node 或 Docker。第一次启动时，如果系统里没有 `cloudflared`，它会从 Cloudflare 的 GitHub 发布页下载官方程序。
