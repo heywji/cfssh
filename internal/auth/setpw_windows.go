@@ -7,15 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 
 	"cfssh/internal/clientcfg"
+
+	"cfssh/internal/hidewin"
 )
 
 var netUserSetInfo = windows.NewLazySystemDLL("netapi32.dll").NewProc("NetUserSetInfo")
@@ -24,7 +24,6 @@ const (
 	nerrUserNotFound      = 2221
 	nerrPasswordTooShort  = 2245 // also returned for complexity and history failures
 	errorAccessDenied     = 5
-	createNoWindow        = 0x08000000
 	userInfo1003PasswdLvl = 1003
 )
 
@@ -67,9 +66,8 @@ func isMicrosoftAccount(name string) bool {
 		return false
 	}
 	quoted := "'" + strings.ReplaceAll(name, "'", "''") + "'"
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+	cmd := hidewin.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
 		"(Get-LocalUser -Name "+quoted+" -ErrorAction SilentlyContinue).PrincipalSource")
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 	out, err := cmd.Output()
 	if err != nil {
 		return false

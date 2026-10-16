@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"cfssh/internal/hidewin"
 )
 
 // EnsureKey creates ~/.ssh/cfssh_ed25519 when it is missing and installs the
@@ -28,7 +30,7 @@ func EnsureKey(logf func(string)) (string, error) {
 		if lookErr != nil {
 			return "", fmt.Errorf("找不到 ssh-keygen，跳过密钥生成: %w", lookErr)
 		}
-		cmd := exec.Command(bin, "-t", "ed25519", "-f", priv, "-N", "", "-C", "cfssh", "-q")
+		cmd := hidewin.Command(bin, "-t", "ed25519", "-f", priv, "-N", "", "-C", "cfssh", "-q")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("生成 SSH 密钥失败: %w (%s)", err, strings.TrimSpace(string(out)))
