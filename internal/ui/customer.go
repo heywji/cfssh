@@ -32,7 +32,7 @@ func runCustomer(orch *orchestrator.Orchestrator, b provision.File) {
 	a := app.NewWithID("dev.cfssh.app")
 	a.Settings().SetTheme(newCJKTheme())
 	w := a.NewWindow("CF SSH")
-	w.Resize(fyne.NewSize(760, 560))
+	w.Resize(fyne.NewSize(760, 760))
 
 	status := canvas.NewText("未运行", color.NRGBA{R: 140, G: 70, B: 40, A: 255})
 	status.TextSize = 18
@@ -73,6 +73,7 @@ func runCustomer(orch *orchestrator.Orchestrator, b provision.File) {
 	command := widget.NewMultiLineEntry()
 	command.SetText("启动后这里会显示连接命令，发给要登录的人。对方电脑也要安装 cloudflared。")
 	command.Wrapping = fyne.TextWrapWord
+	command.SetMinRowsVisible(4)
 
 	logs := newLogView()
 
@@ -198,17 +199,16 @@ func runCustomer(orch *orchestrator.Orchestrator, b provision.File) {
 		command,
 	)
 
-	split := container.NewVSplit(
-		container.NewVScroll(form),
-		container.NewBorder(widget.NewLabel("日志"), nil, nil, nil, logs.scroll),
-	)
-	split.Offset = 0.62
+	// The form keeps its full height (a split at a fixed ratio cut the
+	// connection-command box in half); the log takes whatever is left.
+	body := container.NewBorder(form, nil, nil, nil,
+		container.NewBorder(widget.NewLabel("日志"), nil, nil, nil, logs.scroll))
 
 	header := container.NewVBox(
 		container.NewHBox(widget.NewLabel("CF SSH"), layout.NewSpacer(), status),
 		widget.NewLabel(fmt.Sprintf("%s/%s  ·  当前用户 %s", runtime.GOOS, runtime.GOARCH, clientcfg.CurrentUser())),
 	)
-	w.SetContent(container.NewBorder(container.NewPadded(header), nil, nil, nil, split))
+	w.SetContent(container.NewBorder(container.NewPadded(header), nil, nil, nil, body))
 
 	w.SetCloseIntercept(func() {
 		if runCancel != nil {
