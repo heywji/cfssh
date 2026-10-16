@@ -91,14 +91,10 @@ func cachedPath(dir string) string {
 
 func assetName() string {
 	arch := runtime.GOARCH
-	switch runtime.GOOS {
-	case "windows":
+	if runtime.GOOS == "windows" {
 		return "cloudflared-windows-" + arch + ".exe"
-	case "darwin":
-		return "cloudflared-darwin-" + arch + ".tgz"
-	default:
-		return "cloudflared-linux-" + arch
 	}
+	return "cloudflared-darwin-" + arch + ".tgz"
 }
 
 func extractSingle(tgzPath, dest string) error {

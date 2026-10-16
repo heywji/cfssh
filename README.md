@@ -20,9 +20,9 @@ open ~/Downloads/CF\ SSH.app
 
 Windows 上如果 SmartScreen 拦截，点「仍要运行」。API 令牌不要贴进窗口，只写在配置文件的 `api_token` 里。
 
-Linux 在 Fedora 或 Ubuntu 上执行 `make build`。客户端只要安装 [cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)，然后 `ssh 你的主机名`。
+程序本身只支持 Windows 和 macOS。连进来的客户端可以是任何系统，只要安装 [cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)，然后 `ssh 你的主机名`。
 
-主要在 Windows 上用。同一套代码也能在 Fedora、Ubuntu 和 macOS 上编译。程序是一个 Go 二进制，运行时不用再装 Python、Node 或 Docker。第一次启动时，如果系统里没有 `cloudflared`，它会从 Cloudflare 的 GitHub 发布页下载官方程序。
+主要在 Windows 上用，也支持 macOS。程序是一个 Go 二进制，运行时不用再装 Python、Node 或 Docker。第一次启动时，如果系统里没有 `cloudflared`，它会从 Cloudflare 的 GitHub 发布页下载官方程序。
 
 临时的 `trycloudflare.com` 地址只能转发网站，不能转发 SSH。所以需要：
 
@@ -31,7 +31,7 @@ Linux 在 Fedora 或 Ubuntu 上执行 `make build`。客户端只要安装 [clou
 
 ## 它会做什么
 
-1. 安装或使用本机的 OpenSSH。Linux 上如果没有 `sshd`，会用 `apt` 或 `dnf` 安装。Windows 上会启用系统自带的 OpenSSH Server 功能。macOS 使用系统自带的 `sshd`。
+1. 安装或使用本机的 OpenSSH。Windows 上会启用系统自带的 OpenSSH Server 功能。macOS 使用系统自带的 `sshd`，单独起一个实例，不动系统的「远程登录」。
 2. SSH 默认只听 `127.0.0.1` 上的一个端口（默认 2222）。不在路由器上做端口映射，也不打开入站防火墙。
 3. 用预配好的隧道令牌（或高级界面里的 API 令牌）启动远程管理的 Cloudflare Tunnel，把 `主机名` 指到本机 SSH。只有 cloudflared 真正连上 Cloudflare 之后，窗口才显示「运行中」。
 4. 创建 Cloudflare Access 应用，并给客户端发一把服务令牌。连接时不用收邮箱验证码。
@@ -53,7 +53,7 @@ Linux 在 Fedora 或 Ubuntu 上执行 `make build`。客户端只要安装 [clou
 
 区域资源选你要用来公开 SSH 的那个域名。令牌保存在本机配置里，文件权限是 `0600`：
 
-- macOS 和 Linux：`~/.config/cfssh/config.json`
+- macOS：`~/.config/cfssh/config.json`
 - Windows：`%AppData%\cfssh\config.json`
 
 ## 使用
@@ -79,7 +79,7 @@ cfssh provision -token <API令牌> -zone example.com -subdomain ssh -tunnel-name
 1. 把 `cfssh.exe` 和旁边的 `cfssh-provision.json` 一起运行。程序检测到 sidecar 后，界面只剩一个「当前用户密码」输入框。
 2. 填写当前用户的登录密码并再输入一次。Windows 上就是当前 Windows 用户的登录密码，别人 SSH 进来时要用同一个。程序只向系统核对，不写入任何文件，也不修改密码。
    - **不知道自己的密码？** 如果当前用户是这台电脑的管理员（本地账户），窗口里会出现「不知道当前密码？给 <用户> 设置一个新密码」。勾选后输入新密码，启动前会再确认一次，然后把这个 Windows 账户的登录密码改成新密码（以后登录这台电脑也用它）。新密码用 Windows DPAPI 加密后交给提权进程，不以明文落盘。域账户和微软账户不支持。
-3. 点「启动」。Windows 会弹出 UAC，macOS 弹管理员密码框，Linux 桌面走 polkit（`pkexec`）。
+3. 点「启动」。Windows 会弹出 UAC，macOS 弹管理员密码框。
 4. 启动后窗口里给出连接命令，发给要登录的人。关掉窗口就停掉隧道和 SSH。
 
 > 没有 `cfssh-provision.json` 时，程序会打开完整的高级界面（运营方也可以在那里图形化地验证令牌、选域名、一键启动，令牌仍只读取自本机配置文件 `api_token`，不显示在窗口里）。
@@ -100,7 +100,7 @@ Host ssh.example.com
 ## 关掉之后
 
 - `cloudflared` 会被结束。
-- Linux 和 macOS 上，程序自己拉起的 `sshd` 会被结束，系统原来的 SSH 服务不动。
+- macOS 上，程序自己拉起的 `sshd` 会被结束，系统原来的 SSH 服务不动。
 - Windows 上会停掉 OpenSSH 服务，并把 `sshd_config` 还原。安装程序自带的 OpenSSH 入站防火墙规则会被删掉，避免 22 端口裸露在网上。
 - 如果从任务管理器强制结束窗口进程，旁边的 helper 发现父进程没了，也会停掉隧道和 SSH。正在安装 OpenSSH 时关掉窗口，安装进程同样会被停掉。
 
@@ -113,25 +113,14 @@ Host ssh.example.com
 
 ## 编译
 
-在目标系统上编译。Fyne 界面需要 CGO 和系统图形库，所以不能从 macOS 直接交叉编译出一个能用的 Windows 程序。
+只支持 Windows 和 macOS，在其他系统上编译会直接报错。
 
-macOS：安装 Xcode 命令行工具，然后 `make build`。
+macOS：安装 Xcode 命令行工具，然后 `make build`（或 `make build-macos-app` 生成 `CF SSH.app`）。
 
-Ubuntu：
+Windows：两种方式都行。
 
-```bash
-sudo apt install golang gcc libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
-make build
-```
-
-Fedora：
-
-```bash
-sudo dnf install golang gcc libGL-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel
-make build
-```
-
-Windows：安装 Go 和 [MSYS2/mingw-w64](https://www.mingw-w64.org/) 的 gcc，然后在该环境里执行：
+- 在 macOS 上交叉编译：`brew install mingw-w64`，然后 `make build-windows`，得到 `dist/cfssh.exe`。
+- 在 Windows 上：安装 Go 和 [MSYS2/mingw-w64](https://www.mingw-w64.org/) 的 gcc，然后在该环境里执行：
 
 ```bat
 set CGO_ENABLED=1
