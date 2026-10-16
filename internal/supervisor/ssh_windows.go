@@ -1,0 +1,211 @@
+//go:build windows
+
+package supervisor
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"cfssh/internal/sshd"
+)
+
+func startSSHD(dir string, req Request, logf func(string)) (*proc, error) {
+	if err := installOpenSSHCapability(dir, req.ParentPID, logf); err != nil {
+		return nil, err
+	}
+	if err := ensureWindowsHostKeys(logf); err != nil {
+		return nil, err
+	}
+	cfgPath := windowsConfigPath()
+	if err := patchWindowsConfig(dir, cfgPath, req); err != nil {
+		return nil, err
+	}
+	if err := removeOpenSSHFirewall(logf); err != nil {
+		logf("移除 OpenSSH 防火墙规则时出错: " + err.Error())
+	}
+	if err := startWindowsService(logf); err != nil {
+		_ = restoreWindowsConfig(dir, cfgPath)
+		return nil, err
+	}
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(req.Port))
+	if err := waitListen(addr, 20*time.Second, nil); err != nil {
+		_ = stopWindowsService()
+		_ = restoreWindowsConfig(dir, cfgPath)
+		return nil, fmt.Errorf("sshd 服务没有开始监听 %s: %w", addr, err)
+	}
+	logf("Windows OpenSSH 服务已监听 " + req.Listen + ":" + strconv.Itoa(req.Port) + "。关闭窗口时会停掉该服务并还原配置。")
+	return &proc{
+		aliveFn: serviceRunning,
+		stopFn: func() {
+			if err := stopWindowsService(); err != nil {
+				logf("停止 sshd 服务失败: " + err.Error())
+			}
+			if err := restoreWindowsConfig(dir, cfgPath); err != nil {
+				logf("还原 sshd 配置失败: " + err.Error())
+			}
+			logf("已停止 Windows OpenSSH 服务并还原配置")
+		},
+	}, nil
+}
+
+func windowsConfigPath() string {
+	root := os.Getenv("ProgramData")
+	if root == "" {
+		root = `C:\ProgramData`
+	}
+	return filepath.Join(root, "ssh", "sshd_config")
+}
+
+func installOpenSSHCapability(dir string, parent int, logf func(string)) error {
+	script := `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$cap = Get-WindowsCapability -Online | Where-Object { $_.Name -like 'OpenSSH.Server*' } | Select-Object -First 1
+if (-not $cap -or $cap.State -ne 'Installed') {
+  Write-Output 'installing OpenSSH Server'
+  Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null
+}
+Write-Output 'OpenSSH Server installed'
+`
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	out, err := combinedOutputWhileParent(parent, dir, cmd)
+	if text := strings.TrimSpace(string(out)); text != "" {
+		logf(text)
+	}
+	if err != nil {
+		return fmt.Errorf("安装 OpenSSH Server 失败: %w", err)
+	}
+	return nil
+}
+
+func ensureWindowsHostKeys(logf func(string)) error {
+	root := os.Getenv("ProgramData")
+	if root == "" {
+		root = `C:\ProgramData`
+	}
+	key := filepath.Join(root, "ssh", "ssh_host_ed25519_key")
+	if fileExists(key) {
+		return nil
+	}
+	bin := `C:\Windows\System32\OpenSSH\ssh-keygen.exe`
+	if !fileExists(bin) {
+		return fmt.Errorf("找不到 %s", bin)
+	}
+	out, err := exec.Command(bin, "-A").CombinedOutput()
+	if strings.TrimSpace(string(out)) != "" {
+		logf(strings.TrimSpace(string(out)))
+	}
+	if err != nil {
+		return fmt.Errorf("生成主机密钥失败: %w", err)
+	}
+	return nil
+}
+
+func patchWindowsConfig(dir, cfgPath string, req Request) error {
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		return err
+	}
+	bak := filepath.Join(dir, "sshd_config.orig")
+	var original []byte
+	if fileExists(bak) {
+		var err error
+		original, err = os.ReadFile(bak)
+		if err != nil {
+			return err
+		}
+	} else if fileExists(cfgPath) {
+		var err error
+		original, err = os.ReadFile(cfgPath)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(bak, original, 0o600); err != nil {
+			return err
+		}
+	}
+	patched := sshd.PatchWindows(string(original), req.Port, req.Listen, req.AllowUser, req.PasswordAuth)
+	return os.WriteFile(cfgPath, []byte(patched), 0o644)
+}
+
+func restoreWindowsConfig(dir, cfgPath string) error {
+	bak := filepath.Join(dir, "sshd_config.orig")
+	if !fileExists(bak) {
+		return nil
+	}
+	data, err := os.ReadFile(bak)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
+		return err
+	}
+	return os.Remove(bak)
+}
+
+func removeOpenSSHFirewall(logf func(string)) error {
+	script := `
+$ErrorActionPreference = 'SilentlyContinue'
+Get-NetFirewallRule | Where-Object { $_.DisplayName -like '*OpenSSH*' -or $_.Name -like '*OpenSSH*' } | Remove-NetFirewallRule
+Write-Output 'removed OpenSSH firewall rules'
+`
+	out, err := runPowerShell(script)
+	if strings.TrimSpace(out) != "" {
+		logf(strings.TrimSpace(out))
+	}
+	return err
+}
+
+func startWindowsService(logf func(string)) error {
+	script := `
+$ErrorActionPreference = 'Stop'
+Set-Service -Name sshd -StartupType Manual
+$svc = Get-Service sshd
+if ($svc.Status -eq 'Running') { Restart-Service sshd -Force } else { Start-Service sshd }
+Write-Output 'sshd service running'
+`
+	out, err := runPowerShell(script)
+	if strings.TrimSpace(out) != "" {
+		logf(strings.TrimSpace(out))
+	}
+	if err != nil {
+		return fmt.Errorf("启动 sshd 服务失败: %w", err)
+	}
+	return nil
+}
+
+func stopWindowsService() error {
+	_, err := runPowerShell(`
+$ErrorActionPreference = 'SilentlyContinue'
+Stop-Service sshd -Force
+Set-Service -Name sshd -StartupType Manual
+Write-Output 'sshd service stopped'
+`)
+	return err
+}
+
+func serviceRunning() bool {
+	out, err := exec.Command("sc.exe", "query", "sshd").Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "RUNNING")
+}
+
+func runPowerShell(script string) (string, error) {
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err != nil {
+		if text != "" {
+			return text, fmt.Errorf("%w: %s", err, text)
+		}
+		return text, err
+	}
+	return text, nil
+}

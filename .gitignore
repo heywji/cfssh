@@ -1,0 +1,6 @@
+/dist/
+/cfssh
+/cfssh.exe
+*.test
+internal/ui/fonts/*.ttf
+!internal/ui/fonts/NotoSansSC-Regular.ttf
