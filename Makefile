@@ -1,8 +1,15 @@
-.PHONY: build test run
+.PHONY: build test run build-macos-app
 
 build:
 	mkdir -p dist
 	CGO_ENABLED=1 go build -o dist/cfssh ./cmd/cfssh
+
+build-macos-app: build
+	rm -rf "dist/CF SSH.app"
+	mkdir -p "dist/CF SSH.app/Contents/MacOS"
+	cp dist/cfssh "dist/CF SSH.app/Contents/MacOS/cfssh"
+	cp packaging/Info.plist "dist/CF SSH.app/Contents/Info.plist"
+	codesign --force --sign - --identifier dev.cfssh.app "dist/CF SSH.app"
 
 test:
 	go test ./...

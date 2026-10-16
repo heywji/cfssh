@@ -9,17 +9,16 @@
 | 文件 | 系统 |
 | --- | --- |
 | [cfssh-windows-amd64.exe](https://github.com/heywji/cfssh/releases/latest/download/cfssh-windows-amd64.exe) | Windows 64 位 |
-| [cfssh-macos-arm64](https://github.com/heywji/cfssh/releases/latest/download/cfssh-macos-arm64) | macOS Apple 芯片 |
+| [cfssh-macos.zip](https://github.com/heywji/cfssh/releases/latest/download/cfssh-macos.zip) | macOS Apple 芯片，解压后打开里面的 `CF SSH.app` |
 
-从浏览器下载后，macOS 会提示无法验证开发者。先在终端执行：
+macOS 请用这个 app，不要双击单独的可执行文件。从浏览器下载后如果系统拦住，在终端执行：
 
 ```bash
-xattr -d com.apple.quarantine ~/Downloads/cfssh-macos-arm64
-chmod +x ~/Downloads/cfssh-macos-arm64
-open ~/Downloads/cfssh-macos-arm64
+xattr -dr com.apple.quarantine ~/Downloads/cfssh-macos.zip ~/Downloads/CF\ SSH.app
+open ~/Downloads/CF\ SSH.app
 ```
 
-这条命令去掉下载隔离标记，之后再双击就能打开。Windows 上如果 SmartScreen 拦截，点「仍要运行」。
+Windows 上如果 SmartScreen 拦截，点「仍要运行」。API 令牌不要贴进窗口，只写在配置文件的 `api_token` 里。
 
 Linux 在 Fedora 或 Ubuntu 上执行 `make build`。客户端只要安装 [cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)，然后 `ssh 你的主机名`。
 
@@ -64,7 +63,7 @@ Linux 在 Fedora 或 Ubuntu 上执行 `make build`。客户端只要安装 [clou
 make run
 ```
 
-1. 粘贴令牌，点「验证令牌并拉取域名」。
+1. 把 API 令牌写进配置文件的 `api_token`，打开程序后点「刷新域名」。窗口不显示这把令牌。
 2. 选择账户和域名，主机名前缀默认是 `ssh`，公网名字就是 `ssh.你的域名`。
 3. 填写当前用户的 SSH 登录密码，并再输入一次。Windows 上这就是当前 Windows 用户的登录密码，客户端 SSH 进来时要填同一个密码。程序只向系统核对，不写入配置文件，也不修改这个密码。
 4. 点「启动」。Windows 会弹出 UAC。macOS 会弹出管理员密码框，Linux 桌面用 polkit（`pkexec`）。需要管理员权限是因为 SSH 服务要能登录到本机用户。

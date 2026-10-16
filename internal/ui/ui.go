@@ -54,13 +54,6 @@ func Run(orch *orchestrator.Orchestrator) {
 	intro := widget.NewLabel("主要给 Windows 用，同样能在 Fedora、Ubuntu 和 macOS 上编译。本机启动 SSH，只用 Cloudflare Tunnel 转到公网。关掉窗口就停掉隧道和 SSH。需要一个已经托管在 Cloudflare 的域名。")
 	intro.Wrapping = fyne.TextWrapWord
 
-	token := widget.NewPasswordEntry()
-	if cfg.APIToken != "" {
-		token.SetPlaceHolder("已保存在本机，留空则继续使用")
-	} else {
-		token.SetPlaceHolder("粘贴 Cloudflare API 令牌")
-	}
-
 	accountSel := widget.NewSelect([]string{}, nil)
 	zoneSel := widget.NewSelect([]string{}, nil)
 	var accounts []accountOpt
@@ -200,10 +193,6 @@ func Run(orch *orchestrator.Orchestrator) {
 
 	collect := func() (config.File, string, error) {
 		next := cfg
-		next.APIToken = strings.TrimSpace(token.Text)
-		if next.APIToken == "" {
-			next.APIToken = cfg.APIToken
-		}
 		next.Subdomain = strings.TrimSpace(sub.Text)
 		next.LocalhostOnly = localhost.Checked
 		next.PasswordAuth = true
@@ -221,7 +210,7 @@ func Run(orch *orchestrator.Orchestrator) {
 		next.Port = p
 		acc, ok := selectedAccount(accountSel, accounts)
 		if !ok {
-			return next, "", errors.New("先验证令牌并选择账户")
+			return next, "", errors.New("先点刷新域名并选择账户")
 		}
 		next.AccountID = acc.ID
 		zone, ok := selectedZone(zoneSel, zones, acc.ID)
@@ -234,34 +223,30 @@ func Run(orch *orchestrator.Orchestrator) {
 	}
 
 	var verifyBtn *widget.Button
-	verifyBtn = widget.NewButton("验证令牌并拉取域名", func() {
+	verifyBtn = widget.NewButton("刷新域名", func() {
 		if busy {
 			return
 		}
-		tok := strings.TrimSpace(token.Text)
-		if tok == "" {
-			tok = cfg.APIToken
-		}
-		if tok == "" {
-			orch.Log("先粘贴 API 令牌")
+		if cfg.APIToken == "" {
+			path, _ := config.Path()
+			orch.Log("配置文件里还没有 api_token：" + path)
 			return
 		}
 		busy = true
 		verifyBtn.Disable()
-		orch.Log("正在验证令牌")
+		orch.Log("正在读取账户和域名")
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 			defer cancel()
-			acc, zs, err := orchestrator.TestToken(ctx, tok)
+			acc, zs, err := orchestrator.TestToken(ctx, cfg.APIToken)
 			fyne.Do(func() {
 				busy = false
 				verifyBtn.Enable()
 				if err != nil {
-					orch.Log("令牌验证失败: " + err.Error())
+					orch.Log("读取失败: " + err.Error())
 					setStatus("令牌无效", color.NRGBA{R: 170, G: 40, B: 40, A: 255})
 					return
 				}
-				cfg.APIToken = tok
 				applyAccounts(acc, zs)
 				if err := config.Save(cfg); err != nil {
 					orch.Log("保存配置失败: " + err.Error())
@@ -358,7 +343,8 @@ func Run(orch *orchestrator.Orchestrator) {
 		orch.Log("已复制 SSH 配置")
 	})
 
-	help := widget.NewLabel("令牌权限：账户 Cloudflare Tunnel 编辑；账户 Access 应用和策略编辑；账户 Access 服务令牌编辑；区域 DNS 编辑。区域范围选你的域名。客户端把上面的配置放进 ~/.ssh/config 后直接 ssh。连接时只输入系统密码，不用邮箱验证码。")
+	tokenWhere, _ := config.Path()
+	help := widget.NewLabel("API 令牌只放在 " + tokenWhere + "，窗口里不显示。客户端把上面的配置放进 ~/.ssh/config 后直接 ssh。连接时只输入系统密码，不用邮箱验证码。")
 	help.Wrapping = fyne.TextWrapWord
 
 	tokenPage, _ := parseURL("https://dash.cloudflare.com/profile/api-tokens")
@@ -366,7 +352,7 @@ func Run(orch *orchestrator.Orchestrator) {
 
 	form := container.NewVBox(
 		intro,
-		container.NewBorder(nil, nil, widget.NewLabel("API 令牌"), verifyBtn, token),
+		container.NewBorder(nil, nil, nil, verifyBtn, widget.NewLabel("域名从本机配置里的令牌读取")),
 		container.NewGridWithColumns(2,
 			container.NewBorder(nil, nil, widget.NewLabel("账户"), nil, accountSel),
 			container.NewBorder(nil, nil, widget.NewLabel("域名"), nil, zoneSel),
@@ -429,7 +415,7 @@ func Run(orch *orchestrator.Orchestrator) {
 			})
 		}
 	}()
-	if cfg.APIToken != "" && cfg.AccountID != "" {
+	if cfg.APIToken != "" {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 			defer cancel()
