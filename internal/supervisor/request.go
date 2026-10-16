@@ -18,6 +18,11 @@ type Request struct {
 	Cloudflared  string `json:"cloudflared"`
 	TunnelToken  string `json:"tunnel_token"`
 	Hostname     string `json:"hostname"`
+	// UserName and NewPassword are set when the user chose to give the account
+	// a new password. NewPassword is DPAPI-sealed to that user, never plain text,
+	// and the helper strips it from this file as soon as it has read it.
+	UserName    string `json:"user_name,omitempty"`
+	NewPassword string `json:"new_password,omitempty"`
 }
 
 type Status struct {

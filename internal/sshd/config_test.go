@@ -31,6 +31,32 @@ func TestUnixConfigLocalhost(t *testing.T) {
 	}
 }
 
+func TestPatchWindowsKeepsManagedBlockBeforeMatch(t *testing.T) {
+	original := "" +
+		"#Port 22\n" +
+		"AuthorizedKeysFile\t.ssh/authorized_keys\n" +
+		"Subsystem\tsftp\tsftp-server.exe\n" +
+		"\n" +
+		"Match Group administrators\n" +
+		"       AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys\n"
+	for i, got := range []string{
+		PatchWindows(original, 2222, "127.0.0.1", "ada", true),
+		PatchWindows(PatchWindows(original, 2222, "127.0.0.1", "ada", true), 2222, "127.0.0.1", "ada", true),
+	} {
+		begin := strings.Index(got, markerBegin)
+		match := strings.Index(got, "Match Group administrators")
+		if begin < 0 || match < 0 || begin > match {
+			t.Fatalf("pass %d: managed block must precede Match\n%s", i, got)
+		}
+		if !strings.HasSuffix(got, "Match Group administrators\n       AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys\n") {
+			t.Fatalf("pass %d: Match block must stay last and intact\n%s", i, got)
+		}
+		if strings.Count(got, markerBegin) != 1 {
+			t.Fatalf("pass %d: duplicated managed block\n%s", i, got)
+		}
+	}
+}
+
 func TestPatchWindowsIdempotent(t *testing.T) {
 	original := "" +
 		"Port 22\n" +

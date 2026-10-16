@@ -33,7 +33,7 @@ Linux 在 Fedora 或 Ubuntu 上执行 `make build`。客户端只要安装 [clou
 
 1. 安装或使用本机的 OpenSSH。Linux 上如果没有 `sshd`，会用 `apt` 或 `dnf` 安装。Windows 上会启用系统自带的 OpenSSH Server 功能。macOS 使用系统自带的 `sshd`。
 2. SSH 默认只听 `127.0.0.1` 上的一个端口（默认 2222）。不在路由器上做端口映射，也不打开入站防火墙。
-3. 用 API 令牌创建或复用一条远程管理的 Cloudflare Tunnel，把 `主机名` 指到本机 SSH。
+3. 用预配好的隧道令牌（或高级界面里的 API 令牌）启动远程管理的 Cloudflare Tunnel，把 `主机名` 指到本机 SSH。只有 cloudflared 真正连上 Cloudflare 之后，窗口才显示「运行中」。
 4. 创建 Cloudflare Access 应用，并给客户端发一把服务令牌。连接时不用收邮箱验证码。
 5. 生成本机密钥 `~/.ssh/cfssh_ed25519`，并把公钥写入 `authorized_keys`。Windows 管理员还会写入 `administrators_authorized_keys`。
 6. 关闭窗口、进程退出，或者点「停止」时，停掉 `cloudflared` 和这次启动的 SSH。
@@ -58,16 +58,31 @@ Linux 在 Fedora 或 Ubuntu 上执行 `make build`。客户端只要安装 [clou
 
 ## 使用
 
+分成两个角色。**运营方**（你，持有 Cloudflare API 令牌）先为每台机器预配一次，生成一个 `cfssh-provision.json`；**客户**拿到 `cfssh` 和这个文件后，只需输入自己的登录密码。客户机器上永远不会出现你的 API 令牌。
+
+### 运营方：预配一台机器（命令行）
+
 ```bash
-# 在对应系统上编译后运行
-make run
+# 先看看令牌能用哪些账户和域名
+cfssh provision -token <API令牌> -list
+
+# 为一台机器预配，生成 sidecar 文件
+cfssh provision -token <API令牌> -zone example.com -subdomain ssh -tunnel-name cfssh-客户A
 ```
 
-1. 把 API 令牌写进配置文件的 `api_token`，打开程序后点「刷新域名」。窗口不显示这把令牌。
-2. 选择账户和域名，主机名前缀默认是 `ssh`，公网名字就是 `ssh.你的域名`。
-3. 填写当前用户的 SSH 登录密码，并再输入一次。Windows 上这就是当前 Windows 用户的登录密码，客户端 SSH 进来时要填同一个密码。程序只向系统核对，不写入配置文件，也不修改这个密码。
-4. 点「启动」。Windows 会弹出 UAC。macOS 会弹出管理员密码框，Linux 桌面用 polkit（`pkexec`）。需要管理员权限是因为 SSH 服务要能登录到本机用户。
-5. 把窗口里的命令或 SSH 配置复制到**客户端**。客户端也要安装 [cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/)。登录用户是这台电脑的当前用户，密码是上一步填写的那个。
+这一步会创建/复用隧道、发布 DNS、建好 Access 服务令牌，并把**隧道令牌和公网主机名**（不含 API 令牌）写进 `cfssh-provision.json`。每台机器建议用不同的 `-subdomain` 和 `-tunnel-name`，这样各有各的公网地址和隧道。
+
+把生成的 `cfssh-provision.json` 和 `cfssh`（或 `cfssh.exe`、macOS 的 `CF SSH.app`）**放在同一目录**发给客户即可。
+
+### 客户：只填密码
+
+1. 把 `cfssh.exe` 和旁边的 `cfssh-provision.json` 一起运行。程序检测到 sidecar 后，界面只剩一个「当前用户密码」输入框。
+2. 填写当前用户的登录密码并再输入一次。Windows 上就是当前 Windows 用户的登录密码，别人 SSH 进来时要用同一个。程序只向系统核对，不写入任何文件，也不修改密码。
+   - **不知道自己的密码？** 如果当前用户是这台电脑的管理员（本地账户），窗口里会出现「不知道当前密码？给 <用户> 设置一个新密码」。勾选后输入新密码，启动前会再确认一次，然后把这个 Windows 账户的登录密码改成新密码（以后登录这台电脑也用它）。新密码用 Windows DPAPI 加密后交给提权进程，不以明文落盘。域账户和微软账户不支持。
+3. 点「启动」。Windows 会弹出 UAC，macOS 弹管理员密码框，Linux 桌面走 polkit（`pkexec`）。
+4. 启动后窗口里给出连接命令，发给要登录的人。关掉窗口就停掉隧道和 SSH。
+
+> 没有 `cfssh-provision.json` 时，程序会打开完整的高级界面（运营方也可以在那里图形化地验证令牌、选域名、一键启动，令牌仍只读取自本机配置文件 `api_token`，不显示在窗口里）。
 
 客户端 `~/.ssh/config` 类似：
 
@@ -88,6 +103,21 @@ Host ssh.example.com
 - Linux 和 macOS 上，程序自己拉起的 `sshd` 会被结束，系统原来的 SSH 服务不动。
 - Windows 上会停掉 OpenSSH 服务，并把 `sshd_config` 还原。安装程序自带的 OpenSSH 入站防火墙规则会被删掉，避免 22 端口裸露在网上。
 - 如果从任务管理器强制结束窗口进程，旁边的 helper 发现父进程没了，也会停掉隧道和 SSH。正在安装 OpenSSH 时关掉窗口，安装进程同样会被停掉。
+
+## 已知问题：没有 OpenGL 的 Windows
+
+图形界面用的 Fyne 需要 OpenGL。没有显卡驱动的 Windows（多数云服务器、虚拟机，驱动是 Microsoft Basic Display Adapter）上，双击后窗口不会出现。临时办法：
+
+1. 从 [mesa-dist-win](https://github.com/pal1000/mesa-dist-win/releases) 的 `release-mingw` 包里取出 `x64/opengl32.dll` 和 `x64/libgallium_wgl.dll`，放到 `cfssh.exe` 旁边。
+2. 用下面的 `start-cfssh.cmd` 启动（必须指定 llvmpipe，Mesa 默认的 d3d12 后端在这类机器上同样起不来）：
+
+```bat
+@echo off
+set GALLIUM_DRIVER=llvmpipe
+start "" "%~dp0cfssh.exe"
+```
+
+计划改成 Windows 原生窗口，届时不再需要这一步。
 
 ## 编译
 

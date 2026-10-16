@@ -17,6 +17,7 @@ import (
 	"cfssh/internal/clientcfg"
 	"cfssh/internal/cloudflared"
 	"cfssh/internal/config"
+	"cfssh/internal/provision"
 	"cfssh/internal/supervisor"
 )
 
@@ -77,6 +78,16 @@ func (o *Orchestrator) Running() bool {
 	return false
 }
 
+// LastStatus returns the helper's most recent status, if a run has started.
+func (o *Orchestrator) LastStatus() (supervisor.Status, bool) {
+	dir := o.RunDir()
+	if dir == "" {
+		return supervisor.Status{}, false
+	}
+	st, err := supervisor.ReadStatus(dir)
+	return st, err == nil
+}
+
 // TestToken checks the API token and returns the accounts and zones it can see.
 func TestToken(ctx context.Context, token string) ([]cfapi.Account, []cfapi.Zone, error) {
 	c := cfapi.New(token)
@@ -101,7 +112,58 @@ type Session struct {
 	KeyPath string
 }
 
-func (o *Orchestrator) Start(ctx context.Context, cfg config.File, sshPassword string) (Session, error) {
+// Provision performs the operator-side Cloudflare setup: it creates or reuses the
+// named tunnel, publishes the SSH ingress, upserts the DNS record and ensures the
+// Access application plus its service token. It returns the sidecar bundle a
+// customer machine needs — notably the tunnel token, never the API token. It makes
+// no local changes (no sshd, no cloudflared process), so it is safe to run from an
+// operator workstation that is not the target machine.
+func Provision(ctx context.Context, cfg config.File) (provision.File, error) {
+	if err := validate(cfg); err != nil {
+		return provision.File{}, err
+	}
+	host := config.Hostname(cfg.Subdomain, cfg.ZoneName)
+	c := cfapi.New(cfg.APIToken)
+
+	tun, err := c.EnsureRemoteTunnel(ctx, cfg.AccountID, cfg.TunnelName)
+	if err != nil {
+		return provision.File{}, err
+	}
+	service := fmt.Sprintf("ssh://127.0.0.1:%d", cfg.Port)
+	if err := c.PutSSHIngress(ctx, cfg.AccountID, tun.ID, host, service); err != nil {
+		return provision.File{}, err
+	}
+	if err := c.UpsertTunnelCNAME(ctx, cfg.ZoneID, host, tun.ID); err != nil {
+		return provision.File{}, err
+	}
+	cred, err := c.EnsureAccessSSH(ctx, cfg.AccountID, host, cfapi.AccessCredential{
+		ID:       cfg.ServiceTokenID,
+		ClientID: cfg.ServiceTokenClientID,
+		Secret:   cfg.ServiceTokenSecret,
+	})
+	if err != nil {
+		return provision.File{}, err
+	}
+	return provision.File{
+		Hostname:             host,
+		Port:                 cfg.Port,
+		LocalhostOnly:        cfg.LocalhostOnly,
+		TunnelToken:          tun.Token,
+		TunnelID:             tun.ID,
+		TunnelName:           tun.Name,
+		ServiceTokenClientID: cred.ClientID,
+		ServiceTokenSecret:   cred.Secret,
+		ZoneName:             cfg.ZoneName,
+	}, nil
+}
+
+// Launch brings up SSH and the Cloudflare tunnel on this machine using a
+// pre-provisioned bundle. It touches Cloudflare not at all: the tunnel token in
+// the bundle is all cloudflared needs. The only secret the caller supplies is the
+// current user's login password, which is checked against the OS and never stored.
+// When setNew is true the account is given sshPassword as its new login
+// password (Windows administrators only) instead of checking the current one.
+func (o *Orchestrator) Launch(ctx context.Context, b provision.File, sshPassword string, setNew bool) (Session, error) {
 	o.mu.Lock()
 	if o.helper != nil && o.helper.Process != nil && supervisor.Alive(o.helper.Process.Pid) {
 		o.mu.Unlock()
@@ -109,16 +171,28 @@ func (o *Orchestrator) Start(ctx context.Context, cfg config.File, sshPassword s
 	}
 	o.mu.Unlock()
 
-	if err := validate(cfg); err != nil {
+	if err := b.Validate(); err != nil {
 		return Session{}, err
 	}
-	if err := auth.VerifyCurrentUser(sshPassword); err != nil {
-		return Session{}, err
-	}
-	cfg.PasswordAuth = true
-	o.Log("已核对当前用户的 SSH 登录密码。客户端要用同一个密码。密码不会写入配置文件。")
-	host := config.Hostname(cfg.Subdomain, cfg.ZoneName)
 	userName := clientcfg.CurrentUser()
+	sealed := ""
+	if setNew {
+		if ok, why := auth.SetPasswordSupport(); !ok {
+			return Session{}, errors.New(why)
+		}
+		s, err := auth.SealPassword(sshPassword)
+		if err != nil {
+			return Session{}, err
+		}
+		sealed = s
+		o.Log("启动时会把 Windows 用户 " + userName + " 的登录密码改成新密码。客户端 SSH 时用这个新密码。")
+	} else {
+		if err := auth.VerifyCurrentUser(sshPassword); err != nil {
+			return Session{}, err
+		}
+		o.Log("已核对当前用户的 SSH 登录密码。客户端要用同一个密码。密码不会写入配置文件。")
+	}
+
 	allowUser := ""
 	if userRE.MatchString(userName) {
 		allowUser = userName
@@ -145,73 +219,64 @@ func (o *Orchestrator) Start(ctx context.Context, cfg config.File, sshPassword s
 	}
 	keyPath, err := clientcfg.EnsureKey(o.Log)
 	if err != nil {
-		if !cfg.PasswordAuth {
-			return Session{}, err
-		}
 		o.Log("没有生成本机密钥，登录时使用系统密码: " + err.Error())
 		keyPath = ""
 	}
 
-	port, err := supervisor.PickPort(cfg.Port)
+	// The ingress service URL baked into the tunnel points at this exact port, so
+	// the customer runtime must bind it; it cannot silently fall back to another
+	// port the way the operator all-in-one flow could, because it holds no API
+	// token to update the ingress.
+	free, err := supervisor.PickPort(b.Port)
 	if err != nil {
 		return Session{}, err
 	}
-	if port != cfg.Port {
-		o.Log(fmt.Sprintf("端口 %d 已被占用，改用 %d", cfg.Port, port))
-	}
-	cfg.Port = port
-
-	c := cfapi.New(cfg.APIToken)
-	o.Log("创建或复用 Cloudflare 隧道")
-	tun, err := c.EnsureRemoteTunnel(ctx, cfg.AccountID, cfg.TunnelName)
-	if err != nil {
-		return Session{}, err
-	}
-	cfg.TunnelID = tun.ID
-	o.Log("隧道 " + tun.Name + " " + tun.ID)
-
-	if cfg.Hostname != "" && !strings.EqualFold(cfg.Hostname, host) {
-		o.Log("删除旧的 DNS 记录 " + cfg.Hostname)
-		if err := c.DeleteHostname(ctx, cfg.ZoneID, cfg.Hostname); err != nil {
-			o.Log("删除旧 DNS 失败，继续使用新主机名: " + err.Error())
-		}
-	}
-	service := fmt.Sprintf("ssh://127.0.0.1:%d", port)
-	o.Log("发布 " + host + " → " + service)
-	if err := c.PutSSHIngress(ctx, cfg.AccountID, tun.ID, host, service); err != nil {
-		return Session{}, err
-	}
-	if err := c.UpsertTunnelCNAME(ctx, cfg.ZoneID, host, tun.ID); err != nil {
-		return Session{}, err
-	}
-	o.Log("配置 Cloudflare Access 服务令牌。客户端不用收验证码。")
-	cred, err := c.EnsureAccessSSH(ctx, cfg.AccountID, host, cfapi.AccessCredential{
-		ID:       cfg.ServiceTokenID,
-		ClientID: cfg.ServiceTokenClientID,
-		Secret:   cfg.ServiceTokenSecret,
-	})
-	if err != nil {
-		return Session{}, err
-	}
-	cfg.ServiceTokenID = cred.ID
-	cfg.ServiceTokenClientID = cred.ClientID
-	cfg.ServiceTokenSecret = cred.Secret
-	cfg.Hostname = host
-	if err := config.Save(cfg); err != nil {
-		return Session{}, err
+	if free != b.Port {
+		return Session{}, fmt.Errorf("端口 %d 已被占用，无法启动。该端口已写入云端隧道配置，换端口需要重新预配。", b.Port)
 	}
 
 	req := supervisor.Request{
 		ParentPID:    os.Getpid(),
-		Port:         port,
-		Listen:       config.ListenAddr(cfg.LocalhostOnly),
+		Port:         b.Port,
+		Listen:       config.ListenAddr(b.LocalhostOnly),
 		AllowUser:    allowUser,
-		PasswordAuth: cfg.PasswordAuth,
+		PasswordAuth: true,
 		PermitRoot:   userName == "root",
 		Cloudflared:  bin,
-		TunnelToken:  tun.Token,
-		Hostname:     host,
+		TunnelToken:  b.TunnelToken,
+		Hostname:     b.Hostname,
+		UserName:     userName,
+		NewPassword:  sealed,
 	}
+	cfg := config.File{Hostname: b.Hostname, Port: b.Port, LocalhostOnly: b.LocalhostOnly, PasswordAuth: true}
+	return o.runHelper(ctx, runDir, req, cfg, userName, b.Hostname, keyPath, b.ServiceTokenClientID, b.ServiceTokenSecret)
+}
+
+// Start is the operator all-in-one path (used by the advanced GUI when no sidecar
+// is present): it provisions Cloudflare from cfg and then launches locally.
+func (o *Orchestrator) Start(ctx context.Context, cfg config.File, sshPassword string) (Session, error) {
+	b, err := Provision(ctx, cfg)
+	if err != nil {
+		return Session{}, err
+	}
+	o.Log("隧道 " + b.TunnelName + " " + b.TunnelID)
+	o.Log("发布 " + b.Hostname + fmt.Sprintf(" → ssh://127.0.0.1:%d", b.Port))
+	o.Log("Cloudflare Access 服务令牌已就绪，客户端不用收验证码。")
+	// Persist the operator config so the advanced GUI remembers account/zone/token.
+	cfg.TunnelID = b.TunnelID
+	cfg.Hostname = b.Hostname
+	cfg.ServiceTokenClientID = b.ServiceTokenClientID
+	cfg.ServiceTokenSecret = b.ServiceTokenSecret
+	cfg.PasswordAuth = true
+	if err := config.Save(cfg); err != nil {
+		o.Log("保存配置失败: " + err.Error())
+	}
+	return o.Launch(ctx, b, sshPassword, false)
+}
+
+// runHelper writes the request, starts the privileged helper and waits for it to
+// report running, erroring out or dying. Shared by every launch path.
+func (o *Orchestrator) runHelper(ctx context.Context, runDir string, req supervisor.Request, cfg config.File, userName, host, keyPath, clientID, secret string) (Session, error) {
 	if err := supervisor.WriteRequest(runDir, req); err != nil {
 		return Session{}, err
 	}
@@ -240,8 +305,8 @@ func (o *Orchestrator) Start(ctx context.Context, cfg config.File, sshPassword s
 		}
 		st, err := supervisor.ReadStatus(runDir)
 		if err == nil && st.State == "running" {
-			cmd := clientcfg.Command(userName, host, cfg.ServiceTokenClientID, cfg.ServiceTokenSecret)
-			file := clientcfg.SSHConfig(userName, host, keyPath, cfg.ServiceTokenClientID, cfg.ServiceTokenSecret)
+			cmd := clientcfg.Command(userName, host, clientID, secret)
+			file := clientcfg.SSHConfig(userName, host, keyPath, clientID, secret)
 			o.Log("可以使用: ssh " + userName + "@" + host)
 			o.Log("客户端也要安装 cloudflared。连接时只输入系统密码，不用邮箱验证码。")
 			return Session{Config: cfg, Command: cmd, SSHFile: file, KeyPath: keyPath}, nil
