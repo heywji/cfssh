@@ -107,6 +107,8 @@ const (
 	bstChecked     = 1
 	emSetSel       = 0x00B1
 	emScrollCaret  = 0x00B7
+	emReplaceSel   = 0x00C2
+	wmSetRedraw    = 0x000B
 	emSetCueBanner = 0x1501
 
 	swHide = 0
