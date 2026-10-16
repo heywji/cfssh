@@ -1,16 +1,15 @@
-//go:build !windows
+//go:build darwin
 
 package supervisor
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 )
 
-// StartHelper launches the privileged helper. On Linux and macOS this asks for
-// an administrator password once. The returned command stays running until stop.
+// StartHelper launches the privileged helper. On macOS this asks for an
+// administrator password once (osascript). The returned command stays running until stop.
 func StartHelper(dir string) (*exec.Cmd, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -19,16 +18,10 @@ func StartHelper(dir string) (*exec.Cmd, error) {
 	var cmd *exec.Cmd
 	if os.Geteuid() == 0 {
 		cmd = exec.Command(exe, "helper", "-dir", dir)
-	} else if _, err := exec.LookPath("osascript"); err == nil && isDarwin() {
+	} else {
 		inner := shellQuote(exe) + " helper -dir " + shellQuote(dir)
 		script := `do shell script "` + escapeApple(inner) + `" with administrator privileges`
-		cmd = exec.Command("osascript", "-e", script)
-	} else if path, err := exec.LookPath("pkexec"); err == nil {
-		cmd = exec.Command(path, exe, "helper", "-dir", dir)
-	} else if path, err := exec.LookPath("sudo"); err == nil {
-		cmd = exec.Command(path, exe, "helper", "-dir", dir)
-	} else {
-		return nil, fmt.Errorf("需要 pkexec、sudo，或在 macOS 上使用 osascript 来获取管理员权限")
+		cmd = exec.Command("/usr/bin/osascript", "-e", script)
 	}
 	log, err := os.OpenFile(launchLog(dir), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -48,8 +41,6 @@ func StartHelper(dir string) (*exec.Cmd, error) {
 }
 
 func launchLog(dir string) string { return dir + "/launch.log" }
-
-func isDarwin() bool { return goos() == "darwin" }
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"

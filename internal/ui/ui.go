@@ -67,7 +67,7 @@ func Run(orch *orchestrator.Orchestrator) {
 	status.TextSize = 18
 	status.TextStyle = fyne.TextStyle{Bold: true}
 
-	intro := widget.NewLabel("主要给 Windows 用，同样能在 Fedora、Ubuntu 和 macOS 上编译。本机启动 SSH，只用 Cloudflare Tunnel 转到公网。关掉窗口就停掉隧道和 SSH。需要一个已经托管在 Cloudflare 的域名。")
+	intro := widget.NewLabel("主要给 Windows 用，macOS 上也能用。本机启动 SSH，只用 Cloudflare Tunnel 转到公网。关掉窗口就停掉隧道和 SSH。需要一个已经托管在 Cloudflare 的域名。")
 	intro.Wrapping = fyne.TextWrapWord
 
 	accountSel := widget.NewSelect([]string{}, nil)
