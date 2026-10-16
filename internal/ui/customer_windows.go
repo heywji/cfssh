@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"cfssh/internal/clientcfg"
 	"cfssh/internal/orchestrator"
 	"cfssh/internal/provision"
+	"cfssh/internal/supervisor"
 )
 
 // The customer window on Windows is a plain Win32 window. Fyne needs OpenGL,
@@ -68,7 +70,12 @@ type nativeCustomer struct {
 
 	busy, wasRunning, closing bool
 	runCancel                 context.CancelFunc
-	lastLog                   string
+	// Incremental log: what has already been put into the log box, so new
+	// lines are appended instead of replacing (and repainting) the whole box.
+	logOrch       string // orchestrator text already shown
+	helperPath    string
+	helperOff     int64  // bytes of helper.log already shown
+	helperPartial string // trailing helper bytes without a newline yet
 
 	launchDone chan launchResult
 	stopDone   chan struct{}
@@ -253,7 +260,7 @@ func (w *nativeCustomer) layout() {
 func (w *nativeCustomer) setStatus(text string, color uint32) {
 	w.statusColor = color
 	setText(w.status, text)
-	pInvalidateRect.Call(w.status, 0, 1)
+	pInvalidateRect.Call(w.status, 0, 0) // the static paints its own background
 }
 
 func (w *nativeCustomer) applyMode() {
@@ -419,13 +426,7 @@ func (w *nativeCustomer) tick() {
 	default:
 	}
 
-	if text := customerLogText(w.orch); text != w.lastLog {
-		w.lastLog = text
-		setText(w.log, text)
-		n, _, _ := pGetWindowTextLengthW.Call(w.log)
-		sendMsg(w.log, emSetSel, n, n)
-		sendMsg(w.log, emScrollCaret, 0, 0)
-	}
+	w.appendLog()
 	if w.closing || w.busy {
 		return
 	}
@@ -507,4 +508,89 @@ func customerWndProc(hwnd, msg, wp, lp uintptr) uintptr {
 	}
 	r, _, _ := pDefWindowProcW.Call(hwnd, msg, wp, lp)
 	return r
+}
+
+const maxLogChars = 400_000
+
+// appendLog adds only what is new since the last tick. Replacing the whole
+// edit text every few hundred milliseconds made the box erase, redraw and jump
+// back to the top each time, which flickered badly while starting.
+func (w *nativeCustomer) appendLog() {
+	var lines []string
+	if t := w.orch.Text(); t != w.logOrch {
+		added := t
+		if strings.HasPrefix(t, w.logOrch) {
+			added = strings.TrimPrefix(t[len(w.logOrch):], "\n")
+		}
+		w.logOrch = t
+		if added != "" {
+			lines = append(lines, strings.Split(added, "\n")...)
+		}
+	}
+	lines = append(lines, w.readHelperLines()...)
+	if len(lines) == 0 {
+		return
+	}
+	n, _, _ := pGetWindowTextLengthW.Call(w.log)
+	chunk := strings.Join(lines, "\r\n")
+	if n > 0 {
+		chunk = "\r\n" + chunk
+	}
+	if int(n)+len(chunk) > maxLogChars {
+		// Rare: trim to the newer half in one go, with painting suspended.
+		old := getText(w.log)
+		keep := old[len(old)/2:]
+		if i := strings.Index(keep, "\r\n"); i >= 0 {
+			keep = keep[i+2:]
+		}
+		sendMsg(w.log, wmSetRedraw, 0, 0)
+		setText(w.log, keep+chunk)
+		sendMsg(w.log, wmSetRedraw, 1, 0)
+		pInvalidateRect.Call(w.log, 0, 1)
+		n, _, _ = pGetWindowTextLengthW.Call(w.log)
+		sendMsg(w.log, emSetSel, n, n)
+		sendMsg(w.log, emScrollCaret, 0, 0)
+		return
+	}
+	sendMsg(w.log, emSetSel, n, n)
+	sendMsg(w.log, emReplaceSel, 0, uintptr(unsafe.Pointer(u16(chunk))))
+	sendMsg(w.log, emScrollCaret, 0, 0)
+}
+
+// readHelperLines returns complete new lines from the elevated helper's log.
+func (w *nativeCustomer) readHelperLines() []string {
+	dir := w.orch.RunDir()
+	if dir == "" {
+		return nil
+	}
+	path := supervisor.LogPath(dir)
+	if path != w.helperPath {
+		w.helperPath, w.helperOff, w.helperPartial = path, 0, ""
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	if st.Size() < w.helperOff { // a new run truncated the log
+		w.helperOff, w.helperPartial = 0, ""
+	}
+	if st.Size() == w.helperOff {
+		return nil
+	}
+	buf := make([]byte, st.Size()-w.helperOff)
+	n, _ := f.ReadAt(buf, w.helperOff)
+	w.helperOff += int64(n)
+	text := w.helperPartial + strings.ReplaceAll(string(buf[:n]), "\r\n", "\n")
+	i := strings.LastIndex(text, "\n")
+	if i < 0 {
+		w.helperPartial = text
+		return nil
+	}
+	w.helperPartial = text[i+1:]
+	return strings.Split(text[:i], "\n")
 }
