@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -47,6 +48,10 @@ func Run(orch *orchestrator.Orchestrator) {
 		} else {
 			orch.Log("预配文件读取失败，回退到高级界面: " + err.Error())
 		}
+	}
+	if err := checkGraphics(); err != nil {
+		showFatal(err.Error())
+		os.Exit(1)
 	}
 	a := app.NewWithID("dev.cfssh.app")
 	a.Settings().SetTheme(newCJKTheme())
@@ -548,4 +553,19 @@ func readTail(path string, n int) string {
 
 func newPasswordHint(user string) string {
 	return "会把 Windows 用户 " + user + " 的登录密码改成这个新密码，以后登录这台电脑（包括远程桌面）都要用新密码。新密码要符合这台电脑的密码要求。别人 SSH 进来时也用这个新密码。"
+}
+
+// customerLogText is the window log: the app's own lines followed by the tail
+// of the privileged helper's log for the current run.
+func customerLogText(orch *orchestrator.Orchestrator) string {
+	text := orch.Text()
+	if dir := orch.RunDir(); dir != "" {
+		if extra := readTail(supervisor.LogPath(dir), 80); extra != "" {
+			if text != "" {
+				text += "\n"
+			}
+			text += extra
+		}
+	}
+	return text
 }
