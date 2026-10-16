@@ -4,9 +4,10 @@ package clientcfg
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"cfssh/internal/hidewin"
 )
 
 func installAuthorizedKey(pubLine []byte) error {
@@ -28,7 +29,7 @@ func installAuthorizedKey(pubLine []byte) error {
 		return err
 	}
 	// sshd rejects the admin key file unless only Administrators and SYSTEM can read it.
-	cmd := exec.Command("icacls.exe", adminFile, "/inheritance:r", "/grant", "Administrators:F", "/grant", "SYSTEM:F")
+	cmd := hidewin.Command("icacls.exe", adminFile, "/inheritance:r", "/grant", "Administrators:F", "/grant", "SYSTEM:F")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return errString("设置管理员公钥权限失败", err, out)

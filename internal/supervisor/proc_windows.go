@@ -10,12 +10,15 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+
+	"cfssh/internal/hidewin"
 )
 
 func configureCommand(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
 	}
+	hidewin.Apply(cmd) // cloudflared is a console program; no window for it
 }
 
 func processAlive(pid int) bool {
@@ -36,7 +39,7 @@ func processAlive(pid int) bool {
 }
 
 func commandLine(pid int) string {
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+	out, err := hidewin.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
 		fmt.Sprintf("(Get-CimInstance Win32_Process -Filter \"ProcessId=%d\").CommandLine", pid)).Output()
 	if err != nil {
 		return ""
@@ -45,7 +48,7 @@ func commandLine(pid int) string {
 }
 
 func killPID(pid int) {
-	_ = exec.Command("taskkill.exe", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
+	_ = hidewin.Command("taskkill.exe", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
 }
 
 func stopProcess(cmd *exec.Cmd) {

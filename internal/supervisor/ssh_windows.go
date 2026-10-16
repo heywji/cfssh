@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"cfssh/internal/sshd"
+
+	"cfssh/internal/hidewin"
 )
 
 func startSSHD(dir string, req Request, logf func(string)) (*proc, error) {
@@ -73,7 +74,7 @@ if (-not $cap -or $cap.State -ne 'Installed') {
 }
 Write-Output 'OpenSSH Server installed'
 `
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	cmd := hidewin.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
 	out, err := combinedOutputWhileParent(parent, dir, cmd)
 	if text := strings.TrimSpace(string(out)); text != "" {
 		logf(text)
@@ -95,7 +96,7 @@ func ensureWindowsHostKeys(logf func(string)) error {
 		if !fileExists(bin) {
 			return fmt.Errorf("找不到 %s", bin)
 		}
-		out, err := exec.Command(bin, "-A").CombinedOutput()
+		out, err := hidewin.Command(bin, "-A").CombinedOutput()
 		if strings.TrimSpace(string(out)) != "" {
 			logf(strings.TrimSpace(string(out)))
 		}
@@ -237,7 +238,7 @@ Write-Output 'sshd service stopped'
 }
 
 func serviceRunning() bool {
-	out, err := exec.Command("sc.exe", "query", "sshd").Output()
+	out, err := hidewin.Command("sc.exe", "query", "sshd").Output()
 	if err != nil {
 		return false
 	}
@@ -245,7 +246,7 @@ func serviceRunning() bool {
 }
 
 func runPowerShell(script string) (string, error) {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	cmd := hidewin.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if err != nil {

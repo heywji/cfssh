@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"cfssh/internal/hidewin"
 )
 
 const releaseBase = "https://github.com/cloudflare/cloudflared/releases/latest/download/"
@@ -71,7 +73,7 @@ func Ensure(ctx context.Context, dir string, logf func(string)) (string, error) 
 	if err := os.Chmod(cached, 0o755); err != nil {
 		return "", err
 	}
-	out, err := exec.Command(cached, "--version").CombinedOutput()
+	out, err := hidewin.Command(cached, "--version").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("cloudflared 无法运行: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
