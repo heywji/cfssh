@@ -7,3 +7,6 @@ internal/ui/fonts/*.ttf
 
 # provisioning bundle holds a tunnel token and service-token secret
 cfssh-provision.json
+
+# local config holds the API token; only config.example.json belongs in the repo
+/config.json

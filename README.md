@@ -10,6 +10,9 @@
 | --- | --- |
 | [cfssh-windows-amd64.exe](https://github.com/heywji/cfssh/releases/latest/download/cfssh-windows-amd64.exe) | Windows 64 位 |
 | [cfssh-macos.zip](https://github.com/heywji/cfssh/releases/latest/download/cfssh-macos.zip) | macOS Apple 芯片，解压后打开里面的 `CF SSH.app` |
+| [cfssh-provision.json](https://github.com/heywji/cfssh/releases/latest/download/cfssh-provision.json) | 需要我远程协助时下载，和上面的程序放在同一个文件夹 |
+
+**需要我远程协助？** 下载对应系统的程序和 `cfssh-provision.json`，放进同一个文件夹（macOS 放在 `CF SSH.app` 旁边，并先执行上面的 `xattr` 命令，否则系统会把 app 挪到临时位置运行，找不到这个文件），打开程序，输入你自己的电脑登录密码，点「启动」，然后告诉我一声。我会通过 `remote-control-helper.jiwenkang.com` 连进来。协助结束后关掉窗口，连接就断开了。同一时间只能帮一个人，请先和我约好再打开。
 
 macOS 请用这个 app，不要双击单独的可执行文件。从浏览器下载后如果系统拦住，在终端执行：
 
@@ -55,6 +58,17 @@ Windows 上如果 SmartScreen 拦截，点「仍要运行」。API 令牌不要�
 
 - macOS：`~/.config/cfssh/config.json`
 - Windows：`%AppData%\cfssh\config.json`
+
+第一次使用时，把仓库里的 [`config.example.json`](config.example.json) 复制到上面的位置，改名为 `config.json`，然后填写：
+
+| 字段 | 说明 |
+| --- | --- |
+| `api_token` | 上面创建的 API 令牌 |
+| `account_id` / `zone_id` / `zone_name` | 必填，缺了无法启动。用 `cfssh provision -token <API令牌> -list` 查看 |
+| `subdomain` / `hostname` | `hostname` 就是 `subdomain.zone_name`，例如 `ssh.example.com` |
+| `tunnel_name` | 隧道名。`tunnel_id` 留空，程序会按名字新建或复用 |
+
+`service_token_*` 字段不用填，程序会自动生成并写回这个文件。macOS 上填完执行 `chmod 600 ~/.config/cfssh/config.json`。
 
 ## 使用
 

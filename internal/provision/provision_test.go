@@ -59,3 +59,23 @@ func TestValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestExeCandidatesMacBundle(t *testing.T) {
+	exe := filepath.Join("/Users/u/Downloads", "CF SSH.app", "Contents", "MacOS", "cfssh")
+	got := exeCandidates(exe)
+	want := []string{
+		filepath.Join("/Users/u/Downloads", "CF SSH.app", "Contents", "MacOS", Name),
+		filepath.Join("/Users/u/Downloads", Name),
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestExeCandidatesPlainBinary(t *testing.T) {
+	exe := filepath.Join("/opt", "cfssh", "cfssh")
+	got := exeCandidates(exe)
+	if len(got) != 1 || got[0] != filepath.Join("/opt", "cfssh", Name) {
+		t.Fatalf("got %q", got)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"cfssh/internal/config"
 )
@@ -32,14 +33,15 @@ type File struct {
 }
 
 // Find returns the sidecar path if one exists, looking next to the executable
-// first and then in the user config dir. ok is false when no file is found.
+// first (and next to the .app bundle on macOS) and then in the user config dir.
+// ok is false when no file is found.
 func Find() (string, bool) {
 	var cands []string
 	if exe, err := os.Executable(); err == nil {
 		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = resolved
 		}
-		cands = append(cands, filepath.Join(filepath.Dir(exe), Name))
+		cands = append(cands, exeCandidates(exe)...)
 	}
 	if dir, err := config.Dir(); err == nil {
 		cands = append(cands, filepath.Join(dir, Name))
@@ -50,6 +52,19 @@ func Find() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// exeCandidates lists sidecar paths for an executable. Inside a macOS bundle the
+// binary lives in X.app/Contents/MacOS, but customers put the sidecar beside X.app.
+func exeCandidates(exe string) []string {
+	dir := filepath.Dir(exe)
+	cands := []string{filepath.Join(dir, Name)}
+	contents := filepath.Dir(dir)
+	bundle := filepath.Dir(contents)
+	if filepath.Base(dir) == "MacOS" && filepath.Base(contents) == "Contents" && strings.HasSuffix(bundle, ".app") {
+		cands = append(cands, filepath.Join(filepath.Dir(bundle), Name))
+	}
+	return cands
 }
 
 // Load reads and validates a sidecar file.
