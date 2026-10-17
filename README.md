@@ -43,6 +43,8 @@ Windows 上如果 SmartScreen 拦截，点「仍要运行」。API 令牌不要�
 
 云端的隧道和 DNS 记录会留着，下次启动直接复用。程序不会在关机后自动再开 SSH。
 
+更详细的原理（macOS 和 Windows 上各自怎么起 SSH、断线后怎么自动重连）见 [docs/how-it-works.md](docs/how-it-works.md)。
+
 ## 令牌权限
 
 打开 [API 令牌页面](https://dash.cloudflare.com/profile/api-tokens)，创建自定义令牌，勾选这些权限：
