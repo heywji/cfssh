@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func configureCommand(cmd *exec.Cmd) {
@@ -17,9 +19,19 @@ func processAlive(pid int) bool {
 	if pid <= 1 {
 		return false
 	}
-	err := syscall.Kill(pid, 0)
-	return err == nil
+	if err := syscall.Kill(pid, 0); err != nil {
+		return false
+	}
+	// A child that exited but has not been waited for yet is a zombie and still
+	// answers kill(0). Treat it as gone, or a crashed cloudflared looks alive.
+	if kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid); err == nil && kp.Proc.P_stat == sZomb {
+		return false
+	}
+	return true
 }
+
+// sZomb is SZOMB from <sys/proc.h>.
+const sZomb = 5
 
 func commandLine(pid int) string {
 	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
