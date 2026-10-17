@@ -1,0 +1,13 @@
+{
+  "api_token": "<你的 Cloudflare API 令牌>",
+  "account_id": "<账户 ID>",
+  "zone_id": "<域名的 Zone ID>",
+  "zone_name": "example.com",
+  "subdomain": "ssh",
+  "port": 2222,
+  "localhost_only": true,
+  "password_auth": true,
+  "tunnel_id": "",
+  "tunnel_name": "cfssh",
+  "hostname": "ssh.example.com"
+}

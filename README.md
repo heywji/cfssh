@@ -56,6 +56,17 @@ Windows 上如果 SmartScreen 拦截，点「仍要运行」。API 令牌不要�
 - macOS：`~/.config/cfssh/config.json`
 - Windows：`%AppData%\cfssh\config.json`
 
+第一次使用时，把仓库里的 [`config.example.json`](config.example.json) 复制到上面的位置，改名为 `config.json`，然后填写：
+
+| 字段 | 说明 |
+| --- | --- |
+| `api_token` | 上面创建的 API 令牌 |
+| `account_id` / `zone_id` / `zone_name` | 必填，缺了无法启动。用 `cfssh provision -token <API令牌> -list` 查看 |
+| `subdomain` / `hostname` | `hostname` 就是 `subdomain.zone_name`，例如 `ssh.example.com` |
+| `tunnel_name` | 隧道名。`tunnel_id` 留空，程序会按名字新建或复用 |
+
+`service_token_*` 字段不用填，程序会自动生成并写回这个文件。macOS 上填完执行 `chmod 600 ~/.config/cfssh/config.json`。
+
 ## 使用
 
 分成两个角色。**运营方**（你，持有 Cloudflare API 令牌）先为每台机器预配一次，生成一个 `cfssh-provision.json`；**客户**拿到 `cfssh` 和这个文件后，只需输入自己的登录密码。客户机器上永远不会出现你的 API 令牌。
