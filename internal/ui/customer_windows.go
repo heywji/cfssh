@@ -69,6 +69,7 @@ type nativeCustomer struct {
 	start, stop, copyCmd, copyCfg, cmdLbl, cmd, logLbl, log  uintptr
 
 	busy, wasRunning, closing bool
+	reconnecting              bool
 	runCancel                 context.CancelFunc
 	// Incremental log: what has already been put into the log box, so new
 	// lines are appended instead of replacing (and repainting) the whole box.
@@ -359,6 +360,7 @@ func (w *nativeCustomer) onLaunched(r launchResult) {
 	fmt.Fprintf(&text, "\n登录用户: %s\nSSH 密码: %s\n", w.user, passNote)
 	setText(w.cmd, text.String())
 	w.wasRunning = true
+	w.reconnecting = false
 	w.setStatus("运行中", colRunning)
 	enable(w.stop, true)
 }
@@ -432,6 +434,14 @@ func (w *nativeCustomer) tick() {
 	}
 	if w.orch.Running() {
 		w.wasRunning = true
+		if r := w.orch.Reconnecting(); r != w.reconnecting {
+			w.reconnecting = r
+			if r {
+				w.setStatus("重连中", colBusy)
+			} else {
+				w.setStatus("运行中", colRunning)
+			}
+		}
 		return
 	}
 	// The tunnel or sshd died on its own: say so and allow a new start.

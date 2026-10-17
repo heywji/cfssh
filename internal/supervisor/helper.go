@@ -102,13 +102,18 @@ func runHelper(dir string) int {
 		writeStatus(dir, Status{State: "error", Detail: msg, SSH: "running", Tunnel: "error", Port: req.Port})
 		return 1
 	}
-	defer func() { cfProc.stop() }()
+	stopReady := make(chan struct{})
+	go first.watchReady(stopReady)
+	defer func() {
+		cfProc.stop()
+		close(stopReady)
+	}()
 	_ = os.Remove(tokenPath(dir))
 
 	// Only report "running" once Cloudflare has actually registered a tunnel
 	// connection. A started process is not a working tunnel: a bad flag or a
 	// network that cannot reach Cloudflare both look "started" for a moment.
-	if msg := waitTunnel(dir, req, cfProc, connected, logf); msg != "" {
+	if msg := waitTunnel(dir, req, cfProc, connected, first.connected, logf); msg != "" {
 		logf(msg)
 		writeStatus(dir, Status{State: "error", Detail: msg, SSH: "running", Tunnel: "error", Port: req.Port})
 		return 1
@@ -126,6 +131,11 @@ func runHelper(dir string) int {
 	final := Status{State: "stopped", Detail: "已停止", SSH: "stopped", Tunnel: "stopped", Port: req.Port}
 	code := 0
 	var lastRestart time.Time
+	// fails counts restarts in a row that never got a connection back; each
+	// one doubles the wait before the next, so a cloudflared that cannot run
+	// at all does not fill the log every 10 seconds.
+	fails := 0
+	shownUp := true
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -139,24 +149,45 @@ func runHelper(dir string) int {
 			code = 1
 			break
 		}
+		up := cfProc.alive() && health.connected()
+		if up {
+			fails = 0
+		}
+		// State stays "running" while reconnecting: the helper is still on the
+		// job, and the GUI treats anything else as stopped and offers Start.
+		if up != shownUp {
+			shownUp = up
+			st := Status{State: "running", Detail: req.Hostname, SSH: "running", Tunnel: "running", Port: req.Port}
+			if up {
+				logf("Cloudflare 隧道已重新连接")
+			} else {
+				st.Detail = "隧道断开，正在重连"
+				st.Tunnel = "reconnecting"
+			}
+			writeStatus(dir, st)
+		}
 		reason := ""
 		if !cfProc.alive() {
 			reason = "cloudflared 进程退出了"
 		} else if d := health.downFor(); d >= tunnelDownLimit {
 			reason = fmt.Sprintf("隧道已经断开 %d 秒", int(d.Seconds()))
 		}
-		if reason == "" || time.Since(lastRestart) < tunnelRestartGap {
+		if reason == "" || time.Since(lastRestart) < restartGap(fails) {
 			continue
 		}
+		fails++
 		lastRestart = time.Now()
 		// Restart instead of giving up: the person being helped is usually not
 		// at the keyboard to press start again.
 		cfProc.stop()
 		protocol = nextProtocol(protocol)
 		logf(reason + "，改用 " + protocol + " 重新连接 Cloudflare")
+		close(stopReady)
+		stopReady = make(chan struct{})
 		h := newTunnelHealth()
 		h.waiting()
 		health = h
+		go h.watchReady(stopReady)
 		next, err := startCloudflared(dir, req, protocol, logf, h.line)
 		if err != nil {
 			logf("cloudflared 重启失败: " + err.Error())
@@ -178,7 +209,7 @@ const tunnelConnectTimeout = 90 * time.Second
 
 // waitTunnel blocks until cloudflared registers a connection with Cloudflare.
 // It returns "" on success, or a user-facing reason when the tunnel cannot come up.
-func waitTunnel(dir string, req Request, cf *proc, connected <-chan struct{}, logf func(string)) string {
+func waitTunnel(dir string, req Request, cf *proc, connected <-chan struct{}, isUp func() bool, logf func(string)) string {
 	writeStatus(dir, Status{State: "starting", Detail: "等待 Cloudflare 隧道连接", SSH: "running", Port: req.Port})
 	deadline := time.After(tunnelConnectTimeout)
 	tick := time.NewTicker(500 * time.Millisecond)
@@ -191,6 +222,12 @@ func waitTunnel(dir string, req Request, cf *proc, connected <-chan struct{}, lo
 		case <-deadline:
 			return fmt.Sprintf("%d 秒内没有连上 Cloudflare。这台机器可能访问不了 Cloudflare 隧道（出站 TCP/UDP 7844），请看上面 cloudflared 的日志。", int(tunnelConnectTimeout.Seconds()))
 		case <-tick.C:
+			// The log callback only fires on new lines; /ready can report the
+			// connection after the last one.
+			if isUp() {
+				logf("Cloudflare 隧道已连接")
+				return ""
+			}
 			if !cf.alive() {
 				return "cloudflared 启动后马上退出了，请看上面 cloudflared 的日志。"
 			}

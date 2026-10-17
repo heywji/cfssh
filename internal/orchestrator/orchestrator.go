@@ -78,6 +78,13 @@ func (o *Orchestrator) Running() bool {
 	return false
 }
 
+// Reconnecting reports whether the helper is running but has lost the tunnel
+// and is bringing it back.
+func (o *Orchestrator) Reconnecting() bool {
+	st, ok := o.LastStatus()
+	return ok && st.State == "running" && st.Tunnel == "reconnecting"
+}
+
 // LastStatus returns the helper's most recent status, if a run has started.
 func (o *Orchestrator) LastStatus() (supervisor.Status, bool) {
 	dir := o.RunDir()
