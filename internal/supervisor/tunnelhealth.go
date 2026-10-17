@@ -34,6 +34,12 @@ func restartGap(fails int) time.Duration {
 	return gap
 }
 
+// tunnelStableFor is how long a connection must stay up before the down clock
+// is cleared. On a network where QUIC flaps, a connection registers every ~40s
+// and dies within seconds; counting each of those as a recovery kept the clock
+// from ever reaching tunnelDownLimit, so the helper never tried HTTP/2.
+const tunnelStableFor = 30 * time.Second
+
 // readyFresh is how long a /ready answer is trusted. Past that, for example
 // when the metrics server cannot be reached, the log tracker decides.
 const readyFresh = 15 * time.Second
@@ -48,6 +54,7 @@ type tunnelHealth struct {
 	up        map[string]bool
 	ever      bool
 	downSince time.Time
+	upSince   time.Time
 	metrics   string // host:port of cloudflared's metrics server, from its log
 	ready     int
 	readyAt   time.Time
@@ -81,6 +88,9 @@ func (h *tunnelHealth) waiting() {
 func (h *tunnelHealth) line(s string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Settle before and after, so a connection that has been up long enough
+	// counts as stable even if nothing polled downFor in between.
+	h.settle()
 	defer h.settle()
 	if i := strings.Index(s, metricsMarker); i >= 0 {
 		addr := strings.Fields(s[i+len(metricsMarker):])
@@ -126,11 +136,20 @@ func (h *tunnelHealth) isUp() bool {
 }
 
 func (h *tunnelHealth) settle() {
+	now := h.now()
 	if h.isUp() {
 		h.ever = true
-		h.downSince = time.Time{}
-	} else if h.ever && h.downSince.IsZero() {
-		h.downSince = h.now()
+		if h.upSince.IsZero() {
+			h.upSince = now
+		}
+		if now.Sub(h.upSince) >= tunnelStableFor {
+			h.downSince = time.Time{}
+		}
+		return
+	}
+	h.upSince = time.Time{}
+	if h.ever && h.downSince.IsZero() {
+		h.downSince = now
 	}
 }
 
@@ -141,13 +160,16 @@ func (h *tunnelHealth) connected() bool {
 	return h.isUp()
 }
 
-// downFor is how long the tunnel has had no connection after having had one.
+// downFor is how long the tunnel has been without a stable connection, counted
+// from when it was last stable. It is 0 while a connection is up, so a restart
+// never cuts off one that is still settling; brief connections in between do
+// not reset the clock.
 func (h *tunnelHealth) downFor() time.Duration {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// A stale /ready answer hands the decision back to the log tracker.
 	h.settle()
-	if !h.ever || h.downSince.IsZero() {
+	if !h.ever || h.downSince.IsZero() || h.isUp() {
 		return 0
 	}
 	return h.now().Sub(h.downSince)

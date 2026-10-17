@@ -185,3 +185,44 @@ func TestTunnelHealthRegisterAfterReadyZero(t *testing.T) {
 		t.Fatal("still up")
 	}
 }
+
+// Seen on the Windows machine at 20:26: QUIC connections registered every ~40s
+// and died within 5s. Those blips must not reset the down clock.
+func TestTunnelHealthFlappingStillCountsDown(t *testing.T) {
+	now := time.Unix(1000, 0)
+	h := newTunnelHealth()
+	h.now = func() time.Time { return now }
+	h.line("INF Registered tunnel connection connIndex=0")
+	now = now.Add(time.Hour)
+	h.line(`ERR Serve tunnel error error="failed to accept QUIC stream: timeout: no recent network activity" connIndex=0`)
+	start := now
+	for now.Sub(start) < 2*time.Minute {
+		now = now.Add(35 * time.Second)
+		if d := h.downFor(); d >= tunnelDownLimit {
+			return
+		}
+		h.line("INF Registered tunnel connection connIndex=0 protocol=quic")
+		if h.downFor() != 0 {
+			t.Fatal("no restart while a connection is up")
+		}
+		now = now.Add(5 * time.Second)
+		h.line(`ERR Connection terminated error="failed to dial to edge with quic: timeout: no recent network activity" connIndex=0`)
+	}
+	t.Fatalf("flapping for 2 min never reached the restart limit, downFor=%v", h.downFor())
+}
+
+func TestTunnelHealthStableConnectionClearsClock(t *testing.T) {
+	now := time.Unix(1000, 0)
+	h := newTunnelHealth()
+	h.now = func() time.Time { return now }
+	h.line("INF Registered tunnel connection connIndex=0")
+	h.line("ERR Serve tunnel error connIndex=0")
+	now = now.Add(50 * time.Second)
+	h.line("INF Registered tunnel connection connIndex=0")
+	now = now.Add(tunnelStableFor)
+	h.line("ERR Serve tunnel error connIndex=0")
+	now = now.Add(10 * time.Second)
+	if d := h.downFor(); d != 10*time.Second {
+		t.Fatalf("downFor = %v, want 10s after a stable run", d)
+	}
+}
