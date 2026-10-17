@@ -237,7 +237,11 @@ func runCustomer(orch *orchestrator.Orchestrator, b provision.File) {
 				refreshLog()
 				if orch.Running() {
 					wasRunning = true
-					setStatus("运行中  "+b.Hostname, color.NRGBA{R: 20, G: 120, B: 70, A: 255})
+					if orch.Reconnecting() {
+						setStatus("重连中  "+b.Hostname, color.NRGBA{R: 40, G: 90, B: 160, A: 255})
+					} else {
+						setStatus("运行中  "+b.Hostname, color.NRGBA{R: 20, G: 120, B: 70, A: 255})
+					}
 					return
 				}
 				// The tunnel or sshd died on its own: say so instead of

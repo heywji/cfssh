@@ -422,7 +422,11 @@ func Run(orch *orchestrator.Orchestrator) {
 			fyne.Do(func() {
 				refreshLog()
 				if orch.Running() {
-					setStatus("运行中  "+cfg.Hostname, color.NRGBA{R: 20, G: 120, B: 70, A: 255})
+					if orch.Reconnecting() {
+						setStatus("重连中  "+cfg.Hostname, color.NRGBA{R: 40, G: 90, B: 160, A: 255})
+					} else {
+						setStatus("运行中  "+cfg.Hostname, color.NRGBA{R: 20, G: 120, B: 70, A: 255})
+					}
 				}
 			})
 		}
