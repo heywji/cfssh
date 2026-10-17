@@ -113,7 +113,7 @@ func runHelper(dir string) int {
 	// Only report "running" once Cloudflare has actually registered a tunnel
 	// connection. A started process is not a working tunnel: a bad flag or a
 	// network that cannot reach Cloudflare both look "started" for a moment.
-	if msg := waitTunnel(dir, req, cfProc, connected, logf); msg != "" {
+	if msg := waitTunnel(dir, req, cfProc, connected, first.connected, logf); msg != "" {
 		logf(msg)
 		writeStatus(dir, Status{State: "error", Detail: msg, SSH: "running", Tunnel: "error", Port: req.Port})
 		return 1
@@ -209,7 +209,7 @@ const tunnelConnectTimeout = 90 * time.Second
 
 // waitTunnel blocks until cloudflared registers a connection with Cloudflare.
 // It returns "" on success, or a user-facing reason when the tunnel cannot come up.
-func waitTunnel(dir string, req Request, cf *proc, connected <-chan struct{}, logf func(string)) string {
+func waitTunnel(dir string, req Request, cf *proc, connected <-chan struct{}, isUp func() bool, logf func(string)) string {
 	writeStatus(dir, Status{State: "starting", Detail: "等待 Cloudflare 隧道连接", SSH: "running", Port: req.Port})
 	deadline := time.After(tunnelConnectTimeout)
 	tick := time.NewTicker(500 * time.Millisecond)
@@ -222,6 +222,12 @@ func waitTunnel(dir string, req Request, cf *proc, connected <-chan struct{}, lo
 		case <-deadline:
 			return fmt.Sprintf("%d 秒内没有连上 Cloudflare。这台机器可能访问不了 Cloudflare 隧道（出站 TCP/UDP 7844），请看上面 cloudflared 的日志。", int(tunnelConnectTimeout.Seconds()))
 		case <-tick.C:
+			// The log callback only fires on new lines; /ready can report the
+			// connection after the last one.
+			if isUp() {
+				logf("Cloudflare 隧道已连接")
+				return ""
+			}
 			if !cf.alive() {
 				return "cloudflared 启动后马上退出了，请看上面 cloudflared 的日志。"
 			}

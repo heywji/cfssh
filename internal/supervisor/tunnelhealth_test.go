@@ -167,3 +167,21 @@ func TestRestartGapBacksOff(t *testing.T) {
 		}
 	}
 }
+
+// Seen on the Windows machine: /ready answered 0 while QUIC was still falling
+// back to HTTP/2, then the connections registered. The log is newer and wins.
+func TestTunnelHealthRegisterAfterReadyZero(t *testing.T) {
+	now := time.Unix(1000, 0)
+	h := newTunnelHealth()
+	h.now = func() time.Time { return now }
+	h.setReady(0)
+	now = now.Add(2 * time.Second)
+	h.line("INF Registered tunnel connection connIndex=0 connection=x protocol=http2")
+	if !h.connected() {
+		t.Fatal("a registration logged after /ready said 0 must count as up")
+	}
+	h.setReady(4)
+	if !h.connected() {
+		t.Fatal("still up")
+	}
+}

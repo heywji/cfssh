@@ -92,11 +92,17 @@ func (h *tunnelHealth) line(s string) {
 	idx := connIndex(s)
 	if strings.Contains(s, "Registered tunnel connection") && !strings.Contains(s, "Unregistered") {
 		h.up[idx] = true
+		// This line is newer than the last /ready answer, which may still say
+		// 0 from before the connection came up.
+		h.readyAt = time.Time{}
 		return
 	}
 	for _, m := range tunnelDownMarkers {
 		if strings.Contains(s, m) {
-			delete(h.up, idx)
+			if h.up[idx] {
+				delete(h.up, idx)
+				h.readyAt = time.Time{}
+			}
 			return
 		}
 	}
