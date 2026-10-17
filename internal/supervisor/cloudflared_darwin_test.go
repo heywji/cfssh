@@ -35,8 +35,12 @@ func TestStartCloudflaredPassesTokenByEnv(t *testing.T) {
 	connected := make(chan struct{})
 	var once sync.Once
 
-	p, err := startCloudflared(dir, Request{Cloudflared: bin, TunnelToken: "tok-123"}, logf,
-		func() { once.Do(func() { close(connected) }) })
+	p, err := startCloudflared(dir, Request{Cloudflared: bin, TunnelToken: "tok-123"}, "http2", logf,
+		func(line string) {
+			if strings.Contains(line, "Registered tunnel connection") {
+				once.Do(func() { close(connected) })
+			}
+		})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +64,7 @@ func TestStartCloudflaredPassesTokenByEnv(t *testing.T) {
 			args = l
 		}
 	}
-	if !strings.HasSuffix(args, " run") || strings.Contains(args, "--metrics") || strings.Contains(args, "--token") {
+	if !strings.HasSuffix(args, " --protocol http2 run") || strings.Contains(args, "--metrics") || strings.Contains(args, "--token") {
 		t.Fatalf("unexpected cloudflared args: %q", args)
 	}
 }

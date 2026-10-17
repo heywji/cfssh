@@ -85,14 +85,24 @@ func runHelper(dir string) int {
 	writeStatus(dir, Status{State: "starting", Detail: "正在连接 Cloudflare", SSH: "running", Port: req.Port})
 	connected := make(chan struct{})
 	var connectedOnce sync.Once
-	cfProc, err := startCloudflared(dir, req, logf, func() { connectedOnce.Do(func() { close(connected) }) })
+	// Each cloudflared run gets its own tracker, so late log lines from a
+	// stopped run cannot mark the new one up or down.
+	first := newTunnelHealth()
+	health := first
+	protocol := ""
+	cfProc, err := startCloudflared(dir, req, protocol, logf, func(line string) {
+		first.line(line)
+		if first.connected() {
+			connectedOnce.Do(func() { close(connected) })
+		}
+	})
 	if err != nil {
 		msg := "cloudflared 启动失败: " + err.Error()
 		logf(msg)
 		writeStatus(dir, Status{State: "error", Detail: msg, SSH: "running", Tunnel: "error", Port: req.Port})
 		return 1
 	}
-	defer cfProc.stop()
+	defer func() { cfProc.stop() }()
 	_ = os.Remove(tokenPath(dir))
 
 	// Only report "running" once Cloudflare has actually registered a tunnel
@@ -115,6 +125,7 @@ func runHelper(dir string) int {
 
 	final := Status{State: "stopped", Detail: "已停止", SSH: "stopped", Tunnel: "stopped", Port: req.Port}
 	code := 0
+	var lastRestart time.Time
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -128,12 +139,32 @@ func runHelper(dir string) int {
 			code = 1
 			break
 		}
+		reason := ""
 		if !cfProc.alive() {
-			logf("cloudflared 进程退出了")
-			final = Status{State: "error", Detail: "cloudflared 进程退出了，隧道已断开", SSH: "stopped", Tunnel: "stopped", Port: req.Port}
+			reason = "cloudflared 进程退出了"
+		} else if d := health.downFor(); d >= tunnelDownLimit {
+			reason = fmt.Sprintf("隧道已经断开 %d 秒", int(d.Seconds()))
+		}
+		if reason == "" || time.Since(lastRestart) < tunnelRestartGap {
+			continue
+		}
+		lastRestart = time.Now()
+		// Restart instead of giving up: the person being helped is usually not
+		// at the keyboard to press start again.
+		cfProc.stop()
+		protocol = nextProtocol(protocol)
+		logf(reason + "，改用 " + protocol + " 重新连接 Cloudflare")
+		h := newTunnelHealth()
+		h.waiting()
+		health = h
+		next, err := startCloudflared(dir, req, protocol, logf, h.line)
+		if err != nil {
+			logf("cloudflared 重启失败: " + err.Error())
+			final = Status{State: "error", Detail: "cloudflared 重启失败，隧道已断开", SSH: "stopped", Tunnel: "stopped", Port: req.Port}
 			code = 1
 			break
 		}
+		cfProc = next
 	}
 	cfProc.stop()
 	sshProc.stop()
@@ -170,7 +201,8 @@ func waitTunnel(dir string, req Request, cf *proc, connected <-chan struct{}, lo
 	}
 }
 
-func startCloudflared(dir string, req Request, logf func(string), onConnected func()) (*proc, error) {
+// protocol is "" for cloudflared's default, or "quic" / "http2" to force one.
+func startCloudflared(dir string, req Request, protocol string, logf func(string), onLine func(string)) (*proc, error) {
 	if req.Cloudflared == "" || req.TunnelToken == "" {
 		return nil, fmt.Errorf("缺少 cloudflared 或隧道令牌")
 	}
@@ -178,9 +210,12 @@ func startCloudflared(dir string, req Request, logf func(string), onConnected fu
 	// Keep to flags that every cloudflared release accepts. "--metrics" after
 	// "run" was rejected by cloudflared 2026.10.1 with "flag provided but not
 	// defined", which killed the tunnel on every start.
-	cmd := exec.Command(req.Cloudflared,
-		"tunnel", "--no-autoupdate", "--loglevel", "info", "run",
-	)
+	args := []string{"tunnel", "--no-autoupdate", "--loglevel", "info"}
+	if protocol != "" {
+		// A tunnel-level flag like --loglevel, so it goes before "run".
+		args = append(args, "--protocol", protocol)
+	}
+	cmd := exec.Command(req.Cloudflared, append(args, "run")...)
 	configureCommand(cmd)
 	// Hand the token over in cloudflared's own TUNNEL_TOKEN variable, visible
 	// only to this child. A token file had to be deleted at some point, and
@@ -188,9 +223,7 @@ func startCloudflared(dir string, req Request, logf func(string), onConnected fu
 	cmd.Env = append(os.Environ(), "TUNNEL_TOKEN="+req.TunnelToken)
 	watch := func(line string) {
 		logf(line)
-		if strings.Contains(line, "Registered tunnel connection") {
-			onConnected()
-		}
+		onLine(line)
 	}
 	if err := attachLog(cmd, watch); err != nil {
 		return nil, err
