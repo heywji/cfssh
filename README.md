@@ -10,6 +10,9 @@
 | --- | --- |
 | [cfssh-windows-amd64.exe](https://github.com/heywji/cfssh/releases/latest/download/cfssh-windows-amd64.exe) | Windows 64 位 |
 | [cfssh-macos.zip](https://github.com/heywji/cfssh/releases/latest/download/cfssh-macos.zip) | macOS Apple 芯片，解压后打开里面的 `CF SSH.app` |
+| [cfssh-provision.json](https://github.com/heywji/cfssh/releases/latest/download/cfssh-provision.json) | 需要我远程协助时下载，和上面的程序放在同一个文件夹 |
+
+**需要我远程协助？** 下载对应系统的程序和 `cfssh-provision.json`，放进同一个文件夹（macOS 放在 `CF SSH.app` 旁边），打开程序，输入你自己的电脑登录密码，点「启动」，然后告诉我一声。我会通过 `remote-control-helper.jiwenkang.com` 连进来。协助结束后关掉窗口，连接就断开了。同一时间只能帮一个人，请先和我约好再打开。
 
 macOS 请用这个 app，不要双击单独的可执行文件。从浏览器下载后如果系统拦住，在终端执行：
 
